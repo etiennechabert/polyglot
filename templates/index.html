@@ -521,6 +521,7 @@
     </div>
 
     <script>
+        {% raw %}
         const socket = io();
         let isListening = false;
         let config = {};
@@ -867,6 +868,7 @@
                 closeSettings();
             }
         });
+        {% endraw %}
     </script>
 </body>
 </html>
