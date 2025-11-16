@@ -110,13 +110,21 @@ def initialize_models():
 
     # Initialize Whisper with word-level timestamps for precise speaker alignment
     print(f"[1/3] Loading Whisper Model: {Config.WHISPER_MODEL}")
-    print(f"      Model: openai/whisper-{Config.WHISPER_MODEL}")
+    # Distil-whisper models use their own namespace, regular models need openai/whisper- prefix
+    if "/" in Config.WHISPER_MODEL:
+        # Model already has namespace (e.g., distil-whisper/distil-large-v3)
+        whisper_model_name = Config.WHISPER_MODEL
+    else:
+        # Simple model name needs openai/whisper- prefix (e.g., medium -> openai/whisper-medium)
+        whisper_model_name = f"openai/whisper-{Config.WHISPER_MODEL}"
+    print(f"      Model: {whisper_model_name}")
     transcription_pipe = pipeline(
         "automatic-speech-recognition",
-        model=f"openai/whisper-{Config.WHISPER_MODEL}",
+        model=whisper_model_name,
         device=0 if device == "cuda" else -1,
-        chunk_length_s=30,
+        chunk_length_s=Config.WHISPER_CHUNK_LENGTH,  # Split long audio into chunks to reduce VRAM usage
         return_timestamps="word",  # Enable word-level timestamps for precise speaker alignment
+        generate_kwargs={"task": "transcribe"},  # Transcribe in original language (Whisper auto-detects language)
     )
 
     if device == "cuda":
@@ -324,12 +332,16 @@ def transcribe_and_translate(audio_data, audio_duration):
             print(f"[DEBUG] Audio data shape: {audio_data.shape}")
             print(f"[DEBUG] Audio duration: {audio_duration:.2f}s")
             print(f"[DEBUG] Audio min: {audio_data.min():.4f}, max: {audio_data.max():.4f}, mean: {audio_data.mean():.4f}")
+            if Config.DEVICE == "cuda":
+                print(f"[GPU MEMORY] Start: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
-        # Perform speaker diarization first
+        # Perform speaker diarization first (if enabled)
         speaker_segments = None
-        # Perform speaker diarization (ALWAYS ENABLED)
-        print(f"[{timestamp}] Performing speaker diarization...")
-        speaker_segments = perform_speaker_diarization(audio_data, SAMPLE_RATE)
+        if Config.ENABLE_DIARIZATION:
+            print(f"[{timestamp}] Performing speaker diarization...")
+            speaker_segments = perform_speaker_diarization(audio_data, SAMPLE_RATE)
+        else:
+            print(f"[{timestamp}] Speaker diarization disabled - skipping")
 
         if Config.DEBUG:
             print(f"[DEBUG] Speaker segments: {speaker_segments}")
@@ -338,17 +350,34 @@ def transcribe_and_translate(audio_data, audio_duration):
         if Config.DEBUG:
             print(f"[DEBUG] Starting Whisper transcription...")
         result = transcription_pipe(audio_data)
-        if Config.DEBUG:
-            print(f"[DEBUG] Transcription result type: {type(result)}")
-            print(f"[DEBUG] Transcription result: {result}")
 
-        # Extract full transcript
+        # Extract full transcript and chunks IMMEDIATELY to avoid keeping reference to result
         if isinstance(result, dict) and "text" in result:
             full_transcript = result["text"].strip()
-            chunks = result.get("chunks", [])
+            # Deep copy the chunks data to avoid keeping reference to result object
+            chunks = []
+            for chunk in result.get("chunks", []):
+                if isinstance(chunk, dict):
+                    # Extract only the data we need, not the full chunk object
+                    chunks.append({
+                        "text": str(chunk.get("text", "")),
+                        "timestamp": tuple(chunk.get("timestamp", (0, 0)))
+                    })
         else:
             full_transcript = str(result).strip()
             chunks = []
+
+        # Explicitly delete the result object to release Whisper's internal tensors
+        del result
+
+        # Clear CUDA cache to release unused memory
+        if Config.DEVICE == "cuda":
+            torch.cuda.empty_cache()
+
+        if Config.DEBUG:
+            print(f"[DEBUG] Transcription complete: {len(full_transcript)} chars, {len(chunks)} chunks")
+            if Config.DEVICE == "cuda":
+                print(f"[GPU MEMORY] After Whisper: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
         if not full_transcript:
             is_processing = False
@@ -594,6 +623,8 @@ def transcribe_and_translate(audio_data, audio_duration):
             print(f"[WS EMIT 2/2] Sending translated segments for: {list(translated_segments_by_lang.keys())}")
             for lang, segs in translated_segments_by_lang.items():
                 print(f"  {lang}: {len(segs)} segments")
+            if Config.DEVICE == "cuda":
+                print(f"[GPU MEMORY] After Translations: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
         socketio.emit("new_translation", ws_payload_final)
     except Exception as e:
