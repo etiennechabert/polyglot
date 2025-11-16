@@ -1,0 +1,13 @@
+flask==3.0.0
+flask-socketio==5.3.5
+python-socketio==5.10.0
+sounddevice==0.4.6
+numpy==1.24.3
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+transformers>=4.35.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+accelerate>=0.24.0
+langdetect>=1.0.9

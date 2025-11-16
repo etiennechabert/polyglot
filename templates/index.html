@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polyglot - Real-time Audio Translator</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 8px;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+        }
+
+        header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 28px;
+            flex-grow: 1;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        #startBtn {
+            background: #10b981;
+            color: white;
+        }
+
+        #startBtn:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+
+        #stopBtn {
+            background: #ef4444;
+            color: white;
+        }
+
+        #stopBtn:hover {
+            background: #dc2626;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        }
+
+        #stopBtn:disabled,
+        #startBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        #settingsBtn {
+            background: #6366f1;
+            color: white;
+        }
+
+        #settingsBtn:hover {
+            background: #4f46e5;
+        }
+
+        .status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status.listening {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status.idle {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status.listening .status-dot {
+            background: #10b981;
+        }
+
+        .status.idle .status-dot {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .audio-visualizer {
+            display: inline-flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 30px;
+            padding: 0 10px;
+        }
+
+        .audio-bar {
+            width: 4px;
+            background: linear-gradient(to top, #10b981, #34d399, #6ee7b7);
+            border-radius: 2px;
+            transition: height 0.1s ease;
+            height: 4px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+            height: 90vh;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 10px;
+            padding: 12px 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel h2 {
+            color: #333;
+            font-size: 15px;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #e5e7eb;
+            position: sticky;
+            top: 0;
+            background: rgba(255, 255, 255, 0.95);
+            z-index: 10;
+            flex-shrink: 0;
+        }
+
+        .panel.active-language {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(255, 255, 255, 0.95) 100%);
+            border: 2px solid #667eea;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .panel.active-language h2 {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .content-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .translation-entry {
+            margin-bottom: 6px;
+            padding: 8px 10px;
+            background: #f9fafb;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+            position: relative;
+            padding-left: 24px;
+            animation: slideIn 0.2s ease;
+        }
+
+        .translation-entry::before {
+            content: '•';
+            position: absolute;
+            left: 10px;
+            top: 8px;
+            font-size: 14px;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .translation-entry.highlight {
+            background: linear-gradient(90deg, #fef3c7 0%, #f9fafb 100%);
+            border-left-color: #f59e0b;
+        }
+
+        .timestamp {
+            font-size: 11px;
+            color: #6b7280;
+            margin-bottom: 3px;
+        }
+
+        .text {
+            color: #1f2937;
+            line-height: 1.45;
+            font-size: 14px;
+        }
+
+        .language-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            background: #667eea;
+            color: white;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 10px;
+            letter-spacing: 0.3px;
+            margin-right: 6px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #9ca3af;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        #translationsContainer {
+            display: grid;
+            gap: 20px;
+        }
+
+        /* Settings Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #4b5563;
+            font-weight: 600;
+        }
+
+        .language-list {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .language-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            gap: 10px;
+        }
+
+        .language-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 Polyglot</h1>
+            <div class="controls">
+                <div id="statusIndicator" class="status idle">
+                    <span class="status-dot"></span>
+                    <span>Idle</span>
+                </div>
+                <div class="audio-visualizer" id="audioVisualizer" style="display: none;">
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                </div>
+                <button id="startBtn">▶️ Start Listening</button>
+                <button id="stopBtn" disabled>⏹️ Stop</button>
+                <button id="settingsBtn">⚙️ Settings</button>
+                <button id="debugBtn" onclick="toggleDebug()" style="background: #8b5cf6;">🐛 Debug</button>
+            </div>
+        </header>
+
+        <!-- Debug Panel -->
+        <div id="debugPanel" style="display: none; background: rgba(0, 0, 0, 0.9); color: #10b981; padding: 15px 20px; border-radius: 10px; margin-bottom: 8px; font-family: 'Courier New', monospace; font-size: 12px;">
+            <!-- Audio Level Graph -->
+            <div style="margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <strong style="color: #667eea;">Audio Level</strong>
+                    <span>
+                        <span id="debugAudioLevel" style="color: #667eea;">0.0000</span>
+                        <span style="color: #666;"> / </span>
+                        <span id="debugSilenceThreshold" style="color: #f59e0b;">-</span>
+                    </span>
+                </div>
+                <div style="position: relative; height: 30px; background: #1a1a1a; border-radius: 5px; overflow: hidden;">
+                    <div id="audioLevelBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #34d399); transition: width 0.1s ease;"></div>
+                    <div id="silenceThresholdLine" style="position: absolute; top: 0; bottom: 0; width: 2px; background: #f59e0b; left: 1%;"></div>
+                    <span style="position: absolute; right: 5px; top: 50%; transform: translateY(-50%); font-size: 10px; color: #f59e0b;">Threshold</span>
+                </div>
+            </div>
+
+            <!-- Silence Counter Graph -->
+            <div style="margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <strong style="color: #667eea;">Silence Counter</strong>
+                    <span><span id="debugSilenceCounter" style="color: #667eea;">0</span> / <span id="debugSilenceChunksReq" style="color: #f59e0b;">-</span></span>
+                </div>
+                <div style="position: relative; height: 30px; background: #1a1a1a; border-radius: 5px; overflow: hidden;">
+                    <div id="silenceCounterBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #60a5fa); transition: width 0.1s ease;"></div>
+                    <div id="silenceRequiredLine" style="position: absolute; top: 0; bottom: 0; width: 2px; background: #f59e0b; right: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Other Stats -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; padding-top: 10px; border-top: 1px solid #333;">
+                <div>
+                    <strong style="color: #8b5cf6;">Buffer:</strong> <span id="debugBufferChunks">0</span>
+                </div>
+                <div>
+                    <strong style="color: #8b5cf6;">Processing:</strong> <span id="debugProcessing">No</span>
+                </div>
+                <div>
+                    <strong style="color: #8b5cf6;">Min Chunks:</strong> <span id="debugMinChunks">-</span>
+                </div>
+                <div>
+                    <strong style="color: #8b5cf6;">Max Chunks:</strong> <span id="debugMaxChunks">-</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content" id="mainContent">
+            <!-- Languages will be inserted here by JavaScript, with transcript in the center -->
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <h2>Settings</h2>
+            <div class="form-group">
+                <label>Target Languages</label>
+                <div class="language-list" id="languageList">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Audio Detection Thresholds</label>
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                    <div style="margin-bottom: 15px;" title="Minimum audio duration before processing. INCREASE to avoid tiny fragments. DECREASE to capture shorter sentences.">
+                        <label for="minAudioLength" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Min Audio Length (seconds) ℹ️</span>
+                            <span id="minAudioLengthValue">3.0</span>
+                        </label>
+                        <input type="range" id="minAudioLength" min="1" max="10" step="0.5" value="3.0"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('minAudioLength')"
+                               title="Minimum audio duration before processing. INCREASE to avoid tiny fragments. DECREASE to capture shorter sentences.">
+                    </div>
+
+                    <div style="margin-bottom: 15px;" title="Maximum audio duration before forcing processing. INCREASE for longer sentences. DECREASE if sentences are cut mid-speech.">
+                        <label for="maxAudioLength" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Max Audio Length (seconds) ℹ️</span>
+                            <span id="maxAudioLengthValue">30.0</span>
+                        </label>
+                        <input type="range" id="maxAudioLength" min="10" max="60" step="5" value="30"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('maxAudioLength')"
+                               title="Maximum audio duration before forcing processing. INCREASE for longer sentences. DECREASE if sentences are cut mid-speech.">
+                    </div>
+
+                    <div style="margin-bottom: 15px;" title="Volume level considered as silence. INCREASE if breaking at small pauses. DECREASE if not detecting sentence breaks.">
+                        <label for="silenceThreshold" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Silence Threshold ℹ️</span>
+                            <span id="silenceThresholdValue">0.010</span>
+                        </label>
+                        <input type="range" id="silenceThreshold" min="0.001" max="0.05" step="0.001" value="0.01"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('silenceThreshold')"
+                               title="Volume level considered as silence. INCREASE if breaking at small pauses. DECREASE if not detecting sentence breaks.">
+                    </div>
+
+                    <div title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
+                        <label for="silenceChunks" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Silence Duration (chunks) ℹ️</span>
+                            <span id="silenceChunksValue">30</span>
+                        </label>
+                        <input type="range" id="silenceChunks" min="10" max="100" step="5" value="30"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('silenceChunks')"
+                               title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button onclick="closeSettings()" style="background: #6b7280;">Cancel</button>
+                <button onclick="saveSettings()" style="background: #10b981; color: white;">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let isListening = false;
+        let config = {};
+        const transcripts = [];
+
+        // Available languages for M2M100
+        const availableLanguages = [
+            {code: 'en', name: 'English'},
+            {code: 'de', name: 'German'},
+            {code: 'fr', name: 'French'},
+            {code: 'es', name: 'Spanish'},
+            {code: 'it', name: 'Italian'},
+            {code: 'pt', name: 'Portuguese'},
+            {code: 'nl', name: 'Dutch'},
+            {code: 'pl', name: 'Polish'},
+            {code: 'ru', name: 'Russian'},
+            {code: 'zh', name: 'Chinese'},
+            {code: 'ja', name: 'Japanese'},
+            {code: 'ko', name: 'Korean'},
+            {code: 'ar', name: 'Arabic'},
+            {code: 'hi', name: 'Hindi'}
+        ];
+
+        let debugMode = false;
+
+        // Load configuration
+        fetch('/api/config')
+            .then(r => r.json())
+            .then(data => {
+                config = data;
+                initializeUI();
+            });
+
+        // Load and display thresholds in debug panel
+        fetch('/api/thresholds')
+            .then(r => r.json())
+            .then(thresholds => {
+                // Calculate min/max chunks (assuming 48000Hz sample rate and 1024 chunk size)
+                const sampleRate = 48000;
+                const chunkSize = 1024;
+                const minChunks = Math.floor(sampleRate * thresholds.min_audio_length / chunkSize);
+                const maxChunks = Math.floor(sampleRate * thresholds.max_audio_length / chunkSize);
+
+                document.getElementById('debugMinChunks').textContent = minChunks;
+                document.getElementById('debugMaxChunks').textContent = maxChunks;
+                document.getElementById('debugSilenceThreshold').textContent = thresholds.silence_threshold.toFixed(4);
+                document.getElementById('debugSilenceChunksReq').textContent = thresholds.silence_chunks;
+            });
+
+        function initializeUI() {
+            createTranslationPanels();
+        }
+
+        function toggleDebug() {
+            debugMode = !debugMode;
+            const debugPanel = document.getElementById('debugPanel');
+            const debugBtn = document.getElementById('debugBtn');
+
+            if (debugMode) {
+                debugPanel.style.display = 'block';
+                debugBtn.style.background = '#10b981';
+                debugBtn.textContent = '🐛 Debug ON';
+            } else {
+                debugPanel.style.display = 'none';
+                debugBtn.style.background = '#8b5cf6';
+                debugBtn.textContent = '🐛 Debug';
+            }
+        }
+
+        function createTranslationPanels() {
+            const container = document.getElementById('mainContent');
+            container.innerHTML = '';
+
+            // Create panels for all target languages (2x2 grid)
+            config.target_languages.forEach(lang => {
+                const panel = document.createElement('div');
+                panel.className = 'panel';
+                panel.id = `panel-${lang.code}`;
+                panel.innerHTML = `
+                    <h2>🔤 ${lang.name}</h2>
+                    <div id="translation-${lang.code}" class="translation-content">
+                        <div class="empty-state">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
+                            </svg>
+                            <p>Waiting for translations...</p>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(panel);
+            });
+        }
+
+        // Socket events
+        socket.on('status', (data) => {
+            isListening = data.listening;
+            updateStatus();
+        });
+
+        socket.on('new_translation', (data) => {
+            addTranscription(data);
+        });
+
+        socket.on('audio_level', (data) => {
+            updateAudioVisualizer(data.level);
+        });
+
+        socket.on('debug_data', (data) => {
+            if (debugMode) {
+                // Update audio level text and bar
+                document.getElementById('debugAudioLevel').textContent = data.audio_level.toFixed(4);
+                document.getElementById('debugSilenceThreshold').textContent = data.silence_threshold.toFixed(4);
+                const audioLevelPercent = Math.min(100, (data.audio_level / 0.1) * 100); // Scale to 0.1 = 100%
+                document.getElementById('audioLevelBar').style.width = audioLevelPercent + '%';
+
+                // Update silence threshold line position
+                const thresholdPercent = Math.min(100, (data.silence_threshold / 0.1) * 100);
+                document.getElementById('silenceThresholdLine').style.left = thresholdPercent + '%';
+
+                // Update silence counter text and bar
+                document.getElementById('debugSilenceCounter').textContent = data.silence_counter;
+                document.getElementById('debugSilenceChunksReq').textContent = data.silence_chunks_req;
+                const silencePercent = data.silence_chunks_req > 0
+                    ? Math.min(100, (data.silence_counter / data.silence_chunks_req) * 100)
+                    : 0;
+                document.getElementById('silenceCounterBar').style.width = silencePercent + '%';
+
+                // Change color when silence counter reaches threshold
+                if (data.silence_counter >= data.silence_chunks_req) {
+                    document.getElementById('silenceCounterBar').style.background = 'linear-gradient(90deg, #10b981, #34d399)';
+                } else {
+                    document.getElementById('silenceCounterBar').style.background = 'linear-gradient(90deg, #3b82f6, #60a5fa)';
+                }
+
+                // Update other stats
+                document.getElementById('debugBufferChunks').textContent = data.buffer_chunks;
+                const processingEl = document.getElementById('debugProcessing');
+                if (data.is_processing) {
+                    processingEl.textContent = 'Yes';
+                    processingEl.style.color = '#10b981';
+                    processingEl.style.fontWeight = 'bold';
+                } else {
+                    processingEl.textContent = 'No';
+                    processingEl.style.color = '#6b7280';
+                    processingEl.style.fontWeight = 'normal';
+                }
+                document.getElementById('debugMinChunks').textContent = data.min_chunks;
+                document.getElementById('debugMaxChunks').textContent = data.max_chunks;
+            }
+        });
+
+        function updateStatus() {
+            const statusEl = document.getElementById('statusIndicator');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const visualizer = document.getElementById('audioVisualizer');
+
+            if (isListening) {
+                statusEl.className = 'status listening';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>Listening</span>';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                visualizer.style.display = 'inline-flex';
+            } else {
+                statusEl.className = 'status idle';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>Idle</span>';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                visualizer.style.display = 'none';
+            }
+        }
+
+        function updateAudioVisualizer(level) {
+            const bars = document.querySelectorAll('.audio-bar');
+            bars.forEach((bar, index) => {
+                // Create a wave effect across the bars
+                const height = Math.max(4, Math.min(30, level * (1 + Math.random() * 0.5) + Math.sin(Date.now() / 100 + index) * 5));
+                bar.style.height = height + 'px';
+            });
+        }
+
+        function addTranscription(data) {
+            const timestamp = new Date(data.timestamp * 1000).toLocaleTimeString();
+
+            // Remove active-language class from all panels
+            document.querySelectorAll('.panel').forEach(panel => {
+                panel.classList.remove('active-language');
+            });
+
+            // Add active-language class to the source language panel
+            const sourcePanel = document.getElementById(`panel-${data.source_language}`);
+            if (sourcePanel) {
+                sourcePanel.classList.add('active-language');
+            }
+
+            // Add to translation panels
+            config.target_languages.forEach(lang => {
+                const translationContent = document.getElementById(`translation-${lang.code}`);
+                if (translationContent.querySelector('.empty-state')) {
+                    translationContent.innerHTML = '<ul class="content-list"></ul>';
+                }
+
+                let translationList = translationContent.querySelector('.content-list');
+                if (!translationList) {
+                    translationList = document.createElement('ul');
+                    translationList.className = 'content-list';
+                    translationContent.appendChild(translationList);
+                }
+
+                const translationEntry = document.createElement('li');
+                translationEntry.className = 'translation-entry highlight';
+                translationEntry.innerHTML = `
+                    <div class="timestamp">
+                        <span class="language-badge">${lang.code.toUpperCase()}</span>
+                        ${timestamp}
+                    </div>
+                    <div class="text">${data.translations[lang.code]}</div>
+                `;
+                translationList.appendChild(translationEntry);
+
+                // Auto-scroll to bottom - scroll the panel, not the content div
+                const langPanel = translationContent.closest('.panel');
+                langPanel.scrollTop = langPanel.scrollHeight;
+
+                setTimeout(() => {
+                    translationEntry.classList.remove('highlight');
+                }, 1000);
+            });
+        }
+
+        // Control buttons
+        document.getElementById('startBtn').addEventListener('click', () => {
+            socket.emit('start_listening');
+        });
+
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            socket.emit('stop_listening');
+        });
+
+        document.getElementById('settingsBtn').addEventListener('click', () => {
+            openSettings();
+        });
+
+        function openSettings() {
+            const modal = document.getElementById('settingsModal');
+            const languageList = document.getElementById('languageList');
+
+            languageList.innerHTML = '';
+            availableLanguages.forEach(lang => {
+                const isChecked = config.target_languages.some(l => l.code === lang.code);
+                const item = document.createElement('div');
+                item.className = 'language-item';
+                item.innerHTML = `
+                    <input type="checkbox" id="lang-${lang.code}" value="${lang.code}" ${isChecked ? 'checked' : ''}>
+                    <label for="lang-${lang.code}">${lang.name}</label>
+                `;
+                languageList.appendChild(item);
+            });
+
+            // Load current thresholds
+            loadThresholds();
+
+            modal.classList.add('active');
+        }
+
+        function loadThresholds() {
+            fetch('/api/thresholds')
+                .then(r => r.json())
+                .then(thresholds => {
+                    document.getElementById('minAudioLength').value = thresholds.min_audio_length;
+                    document.getElementById('maxAudioLength').value = thresholds.max_audio_length;
+                    document.getElementById('silenceThreshold').value = thresholds.silence_threshold;
+                    document.getElementById('silenceChunks').value = thresholds.silence_chunks;
+
+                    updateThresholdDisplay('minAudioLength');
+                    updateThresholdDisplay('maxAudioLength');
+                    updateThresholdDisplay('silenceThreshold');
+                    updateThresholdDisplay('silenceChunks');
+                });
+        }
+
+        function updateThresholdDisplay(id) {
+            const value = document.getElementById(id).value;
+            const displayId = id + 'Value';
+            const displayElement = document.getElementById(displayId);
+
+            if (id === 'silenceThreshold') {
+                displayElement.textContent = parseFloat(value).toFixed(3);
+            } else if (id === 'minAudioLength' || id === 'maxAudioLength') {
+                displayElement.textContent = parseFloat(value).toFixed(1);
+            } else {
+                displayElement.textContent = value;
+            }
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        function saveSettings() {
+            // Save language config
+            const selectedLanguages = [];
+            document.querySelectorAll('#languageList input[type="checkbox"]:checked').forEach(checkbox => {
+                const lang = availableLanguages.find(l => l.code === checkbox.value);
+                if (lang) {
+                    selectedLanguages.push(lang);
+                }
+            });
+
+            config.target_languages = selectedLanguages;
+
+            // Save thresholds
+            const thresholds = {
+                min_audio_length: parseFloat(document.getElementById('minAudioLength').value),
+                max_audio_length: parseFloat(document.getElementById('maxAudioLength').value),
+                silence_threshold: parseFloat(document.getElementById('silenceThreshold').value),
+                silence_chunks: parseInt(document.getElementById('silenceChunks').value)
+            };
+
+            // Save both configs
+            Promise.all([
+                fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                }),
+                fetch('/api/thresholds', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(thresholds)
+                })
+            ]).then(() => {
+                closeSettings();
+                createTranslationPanels();
+            });
+        }
+
+        // Close modal on outside click
+        document.getElementById('settingsModal').addEventListener('click', (e) => {
+            if (e.target.id === 'settingsModal') {
+                closeSettings();
+            }
+        });
+    </script>
+</body>
+</html>
