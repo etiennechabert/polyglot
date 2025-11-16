@@ -7,6 +7,7 @@ import queue
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -20,9 +21,13 @@ from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, pipeli
 from config import Config
 
 # Configuration from config.py
-TRANSCRIPT_FILE = Path(Config.TRANSCRIPT_FILE)
 SAMPLE_RATE = Config.SAMPLE_RATE
 CHUNK_SIZE = Config.CHUNK_SIZE
+
+# Create timestamped transcript file
+TRANSCRIPTS_DIR = Path("transcripts")
+TRANSCRIPTS_DIR.mkdir(exist_ok=True)
+TRANSCRIPT_FILE = TRANSCRIPTS_DIR / f"transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
 # Dynamic audio detection thresholds (can be changed via API)
 audio_thresholds = Config.get_audio_thresholds()
@@ -120,7 +125,7 @@ def translate_text(text, source_lang, target_lang):
         return f"[Translation error: {str(e)}]"
 
 
-def transcribe_and_translate(audio_data):
+def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation"""
     global is_processing
 
@@ -137,9 +142,10 @@ def transcribe_and_translate(audio_data):
         if transcript:
             print(f"[TRANSCRIBE] Result: {transcript[:100]}...")
 
-            # Append to transcript file
+            # Append to transcript file with timestamp and duration
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                f.write(f"{transcript}\n")
+                f.write(f"[{timestamp}] [Duration: {audio_duration:.2f}s] {transcript}\n")
             print(f"[FILE] Appended to {TRANSCRIPT_FILE}")
 
             # Detect source language
@@ -333,10 +339,13 @@ def process_audio():
                     is_processing = False
                     continue
 
+                # Calculate audio duration
+                audio_duration = len(audio_resampled) / SAMPLE_RATE
+
                 # Launch background thread for transcription and translation
                 # This keeps the main loop responsive for WebSocket updates
                 processing_thread = threading.Thread(
-                    target=transcribe_and_translate, args=(audio_resampled,), daemon=True
+                    target=transcribe_and_translate, args=(audio_resampled, audio_duration), daemon=True
                 )
                 processing_thread.start()
 
