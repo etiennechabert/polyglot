@@ -131,34 +131,20 @@ def transcribe_and_translate(audio_data, audio_duration):
 
     try:
         # Transcribe using resampled audio (auto-detect language)
-        print("[TRANSCRIBE] Starting Whisper transcription...")
-        start_time = time.time()
         result = transcription_pipe(audio_data)
-        transcribe_time = time.time() - start_time
-        print(f"[TRANSCRIBE] Completed in {transcribe_time:.2f} seconds")
-
         transcript = result["text"].strip()
 
         if transcript:
-            print(f"[TRANSCRIBE] Result: {transcript[:100]}...")
-
             # Append to transcript file with timestamp and duration
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] [{audio_duration:.2f}s] {transcript}\n")
-            print(f"[FILE] Appended to {TRANSCRIPT_FILE}")
 
             # Detect source language
             try:
                 source_lang = detect(transcript)
-                print(f"[LANGUAGE] Detected: {source_lang}")
             except LangDetectException:
                 source_lang = "en"
-                print(f"[LANGUAGE] Detection failed, defaulting to: {source_lang}")
-
-            # Prepare translations in parallel
-            print(f"[TRANSLATE] Starting parallel translation to {len(Config.TARGET_LANGUAGES)} languages...")
-            trans_start = time.time()
 
             def translate_to_language(lang_info):
                 target_lang = lang_info["code"]
@@ -172,9 +158,6 @@ def transcribe_and_translate(audio_data, audio_duration):
                 for target_lang, translated in results:
                     translations[target_lang] = translated
 
-            trans_time = time.time() - trans_start
-            print(f"[TRANSLATE] All translations completed in {trans_time:.2f}s")
-
             # Emit to frontend
             socketio.emit(
                 "new_translation",
@@ -185,12 +168,6 @@ def transcribe_and_translate(audio_data, audio_duration):
                     "timestamp": time.time(),
                 },
             )
-
-            total_time = time.time() - start_time
-            print(f"[AUDIO] ===== PROCESSING COMPLETE (Total: {total_time:.2f}s) =====")
-        else:
-            print("[TRANSCRIBE] Empty transcript, skipping")
-
     except Exception as e:
         print(f"[ERROR] Processing error: {e}")
         import traceback
