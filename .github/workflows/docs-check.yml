@@ -1,0 +1,72 @@
+name: Documentation Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check README exists and is not empty
+      run: |
+        if [ ! -f README.md ]; then
+          echo "ERROR: README.md not found"
+          exit 1
+        fi
+
+        if [ ! -s README.md ]; then
+          echo "ERROR: README.md is empty"
+          exit 1
+        fi
+
+        echo "✓ README.md exists and has content"
+
+    - name: Validate README sections
+      run: |
+        required_sections=(
+          "Features"
+          "Installation"
+          "Usage"
+          "Configuration"
+          "Requirements"
+        )
+
+        missing_sections=()
+        for section in "${required_sections[@]}"; do
+          if ! grep -q "$section" README.md; then
+            missing_sections+=("$section")
+          fi
+        done
+
+        if [ ${#missing_sections[@]} -gt 0 ]; then
+          echo "WARNING: Missing recommended sections: ${missing_sections[*]}"
+        else
+          echo "✓ All recommended sections present"
+        fi
+
+    - name: Check for broken markdown links
+      run: |
+        # Install markdown link checker
+        npm install -g markdown-link-check
+
+        # Check links (allow failures for now)
+        markdown-link-check README.md --config .github/workflows/link-check-config.json || true
+
+    - name: Validate code comments
+      run: |
+        python_files=$(find . -name "*.py" -not -path "./venv/*")
+
+        for file in $python_files; do
+          # Check if file has module docstring
+          if ! head -n 5 "$file" | grep -q '"""'; then
+            echo "WARNING: $file missing module docstring"
+          fi
+        done
+
+        echo "✓ Documentation check completed"
