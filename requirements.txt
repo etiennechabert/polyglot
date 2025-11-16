@@ -3,9 +3,10 @@ flask-socketio==5.3.5
 python-socketio==5.10.0
 sounddevice==0.4.6
 numpy==1.24.3
-torch>=2.0.0
-torchvision>=0.15.0
-torchaudio>=2.0.0
+# PyTorch NIGHTLY with CUDA 12.9 support for RTX 5080 (sm_120 compute capability)
+# Install with: pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu129
+# Note: RTX 5080 requires torch >= 2.10.0 nightly (torchvision/torchaudio not needed for this app)
+torch==2.10.0.dev20251016+cu129
 transformers>=4.35.0
 sentencepiece>=0.1.99
 protobuf>=3.20.0
