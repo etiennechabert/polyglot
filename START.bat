@@ -3,6 +3,19 @@ echo ============================================================
 echo Live Multi-Language Translator
 echo ============================================================
 echo.
+echo Verifying GPU setup...
+echo.
+
+REM Verify CUDA/GPU is properly configured
+python verify_gpu.py
+if errorlevel 1 (
+    echo.
+    echo GPU verification failed! Please fix the issues above.
+    pause
+    exit /b 1
+)
+
+echo.
 echo Starting application...
 echo.
 
