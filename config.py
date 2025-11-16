@@ -82,9 +82,9 @@ class Config:
     # Supported codes: en, de, fr, es, it, pt, nl, pl, ru, zh, ja, ko, ar, hi, etc.
     TARGET_LANGUAGES = [
         {"code": "en", "name": "English"},
-        {"code": "de", "name": "German"},
         {"code": "fr", "name": "French"},
-        {"code": "it", "name": "Italian"},
+       #{"code": "de", "name": "German"},
+        #{"code": "it", "name": "Italian"},
     ]
 
     # Auto-detect source language
