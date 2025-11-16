@@ -41,6 +41,45 @@ from config import Config
 # PyTorch nightly works fine with backward compatibility
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.cuda")
 
+# Single instance check - prevent multiple app instances
+LOCK_FILE = Path("polyglot.lock")
+
+def check_single_instance():
+    """Check if another instance of the app is already running"""
+    if LOCK_FILE.exists():
+        try:
+            # Check if the PID in the lock file is still running
+            with open(LOCK_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+
+            # Try to check if process exists (Windows-compatible)
+            import psutil
+            if psutil.pid_exists(old_pid):
+                print(f"\n{'='*80}")
+                print("ERROR: Another instance of Polyglot is already running!")
+                print(f"PID: {old_pid}")
+                print("Please close the other instance first, or delete polyglot.lock if it's stale.")
+                print(f"{'='*80}\n")
+                sys.exit(1)
+            else:
+                # Stale lock file, remove it
+                LOCK_FILE.unlink()
+        except (ValueError, FileNotFoundError, ImportError):
+            # Invalid lock file or psutil not available, remove it
+            LOCK_FILE.unlink()
+
+    # Create lock file with current PID
+    with open(LOCK_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
+def cleanup_lock_file():
+    """Remove lock file on exit"""
+    try:
+        if LOCK_FILE.exists():
+            LOCK_FILE.unlink()
+    except:
+        pass
+
 # Import pyannote.audio for speaker diarization (ALWAYS ENABLED)
 from pyannote.audio import Pipeline as DiarizationPipeline
 
@@ -952,6 +991,13 @@ def handle_disconnect():
 
 
 if __name__ == "__main__":
+    # Check for single instance before doing anything else
+    check_single_instance()
+
+    # Register cleanup function to remove lock file on exit
+    import atexit
+    atexit.register(cleanup_lock_file)
+
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Polyglot - Real-time Audio Translator")
     parser.add_argument(
