@@ -32,14 +32,15 @@ class Config:
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Whisper model configuration
-    # Options: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3"
+    # Options: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "turbo"
     # Distilled models: "distil-whisper/distil-large-v3" (English-only, 5-6x faster)
     # Larger models = better accuracy but slower and more VRAM
+    # turbo (large-v3-turbo): ~6GB VRAM, very good accuracy, multilingual, FAST (~4-6s per audio chunk)
     # large-v3: ~10GB VRAM, most accurate, multilingual, SLOW (~15-20s per audio chunk)
     # medium: ~5GB VRAM, good accuracy, multilingual, FASTER (~5-8s per audio chunk)
     # base: ~1GB VRAM, decent accuracy, multilingual, FASTEST (~2-3s per audio chunk)
-    # NOTE: distil-large-v3 is English-only! Use medium/large-v3 for French/multilingual
-    WHISPER_MODEL = "medium"
+    # NOTE: distil-large-v3 is English-only! Use medium/large-v3/turbo for French/multilingual
+    WHISPER_MODEL = "turbo"
 
     # Whisper chunk length for processing long audio (in seconds)
     # Whisper splits audio longer than this into overlapping chunks
