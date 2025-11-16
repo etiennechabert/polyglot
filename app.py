@@ -6,6 +6,7 @@ Captures system audio and translates speech into multiple languages simultaneous
 import queue
 import threading
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,10 @@ from langdetect import LangDetectException, detect
 from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, pipeline
 
 from config import Config
+
+# Suppress CUDA compatibility warning for RTX 5080 (sm_120)
+# PyTorch nightly works fine with backward compatibility
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.cuda")
 
 # Configuration from config.py
 SAMPLE_RATE = Config.SAMPLE_RATE
@@ -51,6 +56,26 @@ num_channels = 2  # Will be set to the actual number of channels
 def initialize_models():
     """Initialize Whisper and M2M100 models"""
     global transcription_pipe, translation_model, translation_tokenizer
+
+    # CRITICAL: Ensure CUDA is available - this app requires GPU
+    import torch
+    if not torch.cuda.is_available():
+        error_msg = (
+            "\n" + "=" * 80 + "\n"
+            "CRITICAL ERROR: CUDA/GPU is NOT available!\n"
+            "This application requires GPU acceleration to run efficiently.\n"
+            f"PyTorch version: {torch.__version__}\n"
+            f"CUDA available: {torch.cuda.is_available()}\n\n"
+            "To fix this:\n"
+            "1. Uninstall CPU-only PyTorch:\n"
+            "   pip uninstall -y torch torchvision torchaudio\n\n"
+            "2. Reinstall with CUDA support:\n"
+            "   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n\n"
+            "3. Verify NVIDIA drivers are installed and GPU is detected\n"
+            + "=" * 80 + "\n"
+        )
+        print(error_msg)
+        raise RuntimeError("CUDA is not available - GPU acceleration is required!")
 
     device = Config.DEVICE
     print(f"Initializing models on {device}...")
@@ -467,7 +492,7 @@ if __name__ == "__main__":
     initialize_models()
 
     print("\n" + "=" * 60)
-    print("Polyglot 🌍 - Real-time Audio Translator")
+    print("Polyglot - Real-time Audio Translator")
     print("=" * 60)
     print("\nOpen your browser to: http://localhost:5000")
     print(f"Device: {Config.DEVICE}")
