@@ -7,24 +7,26 @@ python-socketio==5.10.0
 sounddevice==0.4.6
 pyaudiowpatch==0.2.12.7
 resampy==0.4.3
-soundfile==0.12.1
+soundfile==0.13.1
 
-# PyTorch (stable versions work best with pyannote.audio)
-# NOTE: torch 2.9.1 works, torch nightly 2.10.0 has compatibility issues with torchaudio
-torch==2.9.1
-torchaudio==2.9.1
+# PyTorch (CUDA version CANNOT be specified here!)
+# You MUST use INSTALL.bat or manually install with --index-url flag
+# Working version: torch==2.8.0+cu129 torchaudio==2.8.0+cu129
+# Manual install: pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu129
+torch==2.8.0
+torchaudio==2.8.0
 
 # Transformers and dependencies
-transformers
-accelerate
-sentencepiece
-protobuf
+transformers==4.57.1
+accelerate==1.11.0
+sentencepiece==0.2.1
+protobuf==6.33.1
 
-# Speaker diarization (3.1.1 is compatible with torch 2.9.1/torchaudio 2.9.1)
-pyannote.audio==3.1.1
-pyannote.core
+# Speaker diarization (4.0.1 tested and working with torch 2.8.0+cu129)
+pyannote.audio==4.0.1
+pyannote.core==6.0.1
 
 # Utilities
-numpy<2.0.0
-langdetect
-python-dotenv
+numpy==2.3.4
+langdetect==1.0.9
+python-dotenv==1.2.1

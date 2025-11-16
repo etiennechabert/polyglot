@@ -38,6 +38,35 @@ if errorlevel 1 (
 )
 
 echo.
+echo Starting Cloudflare Tunnel...
+echo.
+
+REM Check if cloudflared tunnel service is installed
+sc query cloudflared >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Cloudflare tunnel service not found. Installing...
+    for /f "tokens=3" %%a in ('findstr /C:"CLOUDFLARE_TUNNEL_TOKEN" .env') do set TUNNEL_TOKEN=%%a
+    if defined TUNNEL_TOKEN (
+        cloudflared.exe service install %TUNNEL_TOKEN%
+        echo Cloudflare tunnel service installed successfully.
+    ) else (
+        echo WARNING: CLOUDFLARE_TUNNEL_TOKEN not found in .env file.
+        echo Skipping Cloudflare tunnel setup.
+    )
+) else (
+    echo Cloudflare tunnel service already installed.
+)
+
+echo.
+echo Starting Cloudflare tunnel service...
+net start cloudflared 2>nul
+if %errorlevel% equ 0 (
+    echo Cloudflare tunnel started successfully.
+) else (
+    echo Cloudflare tunnel already running or failed to start.
+)
+
+echo.
 echo Starting application...
 echo.
 
