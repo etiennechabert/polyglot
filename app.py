@@ -3,21 +3,19 @@ Polyglot - Real-time Multi-Language Audio Translator
 Captures system audio and translates speech into multiple languages simultaneously
 """
 
-import os
-import time
-import threading
 import queue
-from pathlib import Path
-from datetime import datetime
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO
-import pyaudiowpatch as pyaudio
+from pathlib import Path
+
 import numpy as np
-import torch
-from transformers import pipeline, M2M100ForConditionalGeneration, M2M100Tokenizer
-from langdetect import detect, LangDetectException
+import pyaudiowpatch as pyaudio
 import resampy
+from flask import Flask, jsonify, render_template
+from flask_socketio import SocketIO
+from langdetect import LangDetectException, detect
+from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, pipeline
 
 from config import Config
 
@@ -44,6 +42,7 @@ p_audio = None
 actual_sample_rate = 48000  # Will be set to the actual device sample rate
 num_channels = 2  # Will be set to the actual number of channels
 
+
 def initialize_models():
     """Initialize Whisper and M2M100 models"""
     global transcription_pipe, translation_model, translation_tokenizer
@@ -58,7 +57,7 @@ def initialize_models():
         model=f"openai/whisper-{Config.WHISPER_MODEL}",
         device=0 if device == "cuda" else -1,
         chunk_length_s=30,
-        return_timestamps=False
+        return_timestamps=False,
     )
 
     # Initialize M2M100
@@ -72,6 +71,7 @@ def initialize_models():
 
     print("Models loaded successfully!")
 
+
 def audio_callback(in_data, frame_count, time_info, status):
     """Callback for audio stream"""
     if is_listening and in_data:
@@ -80,51 +80,49 @@ def audio_callback(in_data, frame_count, time_info, status):
         audio_queue.put(audio_data)
     return (in_data, pyaudio.paContinue)
 
+
 def detect_language(text):
     """Detect language using langdetect library"""
     try:
         detected = detect(text)
         # Map langdetect codes to M2M100 codes if needed
         lang_map = {
-            'zh-cn': 'zh',
-            'zh-tw': 'zh',
+            "zh-cn": "zh",
+            "zh-tw": "zh",
         }
         return lang_map.get(detected, detected)
     except LangDetectException:
         print("Language detection failed, defaulting to English")
-        return 'en'  # Default to English if detection fails
+        return "en"  # Default to English if detection fails
+
 
 def translate_text(text, source_lang, target_lang):
     """Translate text using M2M100"""
     if source_lang == target_lang:
         return text
-    
+
     try:
         translation_tokenizer.src_lang = source_lang
         encoded = translation_tokenizer(text, return_tensors="pt")
 
         if Config.DEVICE == "cuda":
             encoded = {k: v.cuda() for k, v in encoded.items()}
-        
+
         generated_tokens = translation_model.generate(
-            **encoded,
-            forced_bos_token_id=translation_tokenizer.get_lang_id(target_lang),
-            max_length=512
+            **encoded, forced_bos_token_id=translation_tokenizer.get_lang_id(target_lang), max_length=512
         )
-        
-        translated = translation_tokenizer.batch_decode(
-            generated_tokens,
-            skip_special_tokens=True
-        )[0]
-        
+
+        translated = translation_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+
         return translated
     except Exception as e:
         print(f"Translation error ({source_lang} -> {target_lang}): {e}")
         return f"[Translation error: {str(e)}]"
 
+
 def process_audio():
     """Process audio chunks and emit transcriptions/translations"""
-    global is_listening, is_processing, actual_sample_rate, audio_thresholds
+    global is_processing
 
     buffer = []
     silence_counter = 0
@@ -133,7 +131,7 @@ def process_audio():
     while actual_sample_rate == 48000 and not is_listening:
         time.sleep(0.1)
 
-    print(f"[AUDIO] Started process_audio thread", flush=True)
+    print("[AUDIO] Started process_audio thread", flush=True)
     print(f"[AUDIO] Using actual_sample_rate: {actual_sample_rate}Hz")
 
     while is_listening:
@@ -156,27 +154,33 @@ def process_audio():
 
             # Calculate audio level
             audio_level = np.abs(chunk).mean()
-            socketio.emit('audio_level', {'level': float(audio_level * 100)})
+            socketio.emit("audio_level", {"level": float(audio_level * 100)})
 
             # Calculate chunk limits dynamically based on current thresholds
             min_chunks = int(actual_sample_rate * audio_thresholds["min_audio_length"] / CHUNK_SIZE)
             max_chunks = int(actual_sample_rate * audio_thresholds["max_audio_length"] / CHUNK_SIZE)
 
             # Emit debug data for UI
-            socketio.emit('debug_data', {
-                'audio_level': float(audio_level),
-                'buffer_chunks': len(buffer),
-                'silence_counter': silence_counter,
-                'is_processing': is_processing,
-                'min_chunks': min_chunks,
-                'max_chunks': max_chunks,
-                'silence_threshold': audio_thresholds["silence_threshold"],
-                'silence_chunks_req': audio_thresholds["silence_chunks"]
-            })
+            socketio.emit(
+                "debug_data",
+                {
+                    "audio_level": float(audio_level),
+                    "buffer_chunks": len(buffer),
+                    "silence_counter": silence_counter,
+                    "is_processing": is_processing,
+                    "min_chunks": min_chunks,
+                    "max_chunks": max_chunks,
+                    "silence_threshold": audio_thresholds["silence_threshold"],
+                    "silence_chunks_req": audio_thresholds["silence_chunks"],
+                },
+            )
 
             # Log audio level every 50 chunks for debugging
             if len(buffer) % 50 == 0:
-                print(f"[AUDIO] Level: {audio_level:.4f}, Buffer: {len(buffer)} chunks, Silence: {silence_counter}", flush=True)
+                print(
+                    f"[AUDIO] Level: {audio_level:.4f}, Buffer: {len(buffer)} chunks, Silence: {silence_counter}",
+                    flush=True,
+                )
 
             # Check if current chunk is silent
             is_silent = audio_level < audio_thresholds["silence_threshold"]
@@ -185,7 +189,11 @@ def process_audio():
                 silence_counter += 1
             else:
                 if silence_counter > 0:
-                    print(f"[AUDIO] Sound detected (level: {audio_level:.4f}), resetting silence counter (was {silence_counter})", flush=True)
+                    print(
+                        f"[AUDIO] Sound detected (level: {audio_level:.4f}), "
+                        f"resetting silence counter (was {silence_counter})",
+                        flush=True,
+                    )
                 silence_counter = 0  # Reset on any sound
 
             buffer.append(chunk)
@@ -199,11 +207,14 @@ def process_audio():
                 # Determine which condition triggered processing
                 trigger_reason = []
                 if silence_detected:
-                    trigger_reason.append(f"SILENCE_DETECTED (buffer: {len(buffer)}/{min_chunks} chunks, silence: {silence_counter}/{audio_thresholds['silence_chunks']} chunks)")
+                    trigger_reason.append(
+                        f"SILENCE_DETECTED (buffer: {len(buffer)}/{min_chunks} chunks, "
+                        f"silence: {silence_counter}/{audio_thresholds['silence_chunks']} chunks)"
+                    )
                 if max_length_reached:
                     trigger_reason.append(f"MAX_LENGTH_REACHED ({len(buffer)}/{max_chunks} chunks)")
 
-                print(f"[AUDIO] ===== STARTING PROCESSING =====")
+                print("[AUDIO] ===== STARTING PROCESSING =====")
                 print(f"[AUDIO] Trigger: {' AND '.join(trigger_reason)}")
                 print(f"[AUDIO] Buffer size: {len(buffer)} chunks, Silence counter: {silence_counter}")
                 print(f"[AUDIO] Queue size before flush: {audio_queue.qsize()}")
@@ -252,7 +263,10 @@ def process_audio():
 
                 # Skip transcription if audio is too quiet (likely silence/hallucination)
                 if avg_audio_level < Config.MIN_AUDIO_LEVEL:
-                    print(f"[AUDIO] Audio too quiet ({avg_audio_level:.4f} < {Config.MIN_AUDIO_LEVEL}), skipping transcription to avoid hallucination")
+                    print(
+                        f"[AUDIO] Audio too quiet ({avg_audio_level:.4f} < {Config.MIN_AUDIO_LEVEL}), "
+                        f"skipping transcription to avoid hallucination"
+                    )
                     is_processing = False
                     continue
 
@@ -269,7 +283,7 @@ def process_audio():
                     print(f"[TRANSCRIBE] Result: {transcript[:100]}...")
 
                     # Append to transcript file
-                    with open(TRANSCRIPT_FILE, 'a', encoding='utf-8') as f:
+                    with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
                         f.write(f"{transcript}\n")
                     print(f"[FILE] Appended to {TRANSCRIPT_FILE}")
 
@@ -305,12 +319,15 @@ def process_audio():
                     print(f"[TRANSLATE] All translations completed in {trans_time:.2f}s")
 
                     # Emit to frontend
-                    socketio.emit('new_translation', {
-                        'transcript': transcript,
-                        'source_language': source_lang,
-                        'translations': translations,
-                        'timestamp': time.time()
-                    })
+                    socketio.emit(
+                        "new_translation",
+                        {
+                            "transcript": transcript,
+                            "source_language": source_lang,
+                            "translations": translations,
+                            "timestamp": time.time(),
+                        },
+                    )
 
                     total_time = time.time() - start_time
                     print(f"[AUDIO] ===== PROCESSING COMPLETE (Total: {total_time:.2f}s) =====")
@@ -325,42 +342,49 @@ def process_audio():
         except Exception as e:
             print(f"[ERROR] Processing error: {e}")
             import traceback
+
             traceback.print_exc()
             is_processing = False  # Release lock on error
             continue
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """Serve the main page"""
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/api/config', methods=['GET'])
+
+@app.route("/api/config", methods=["GET"])
 def get_config():
     """Get current configuration"""
     return jsonify(Config.to_dict())
 
-@app.route('/api/config', methods=['POST'])
+
+@app.route("/api/config", methods=["POST"])
 def update_config():
     """Update configuration - Not implemented for Config class"""
     # Config is now in config.py, changes require editing that file
     return jsonify({"status": "error", "message": "Config is now in config.py - edit that file to make changes"})
 
-@app.route('/api/thresholds', methods=['GET'])
+
+@app.route("/api/thresholds", methods=["GET"])
 def get_thresholds():
     """Get current audio detection thresholds"""
     return jsonify(audio_thresholds)
 
-@app.route('/api/thresholds', methods=['POST'])
+
+@app.route("/api/thresholds", methods=["POST"])
 def update_thresholds():
     """Update audio detection thresholds"""
     from flask import request
-    global audio_thresholds
+
     data = request.json
     audio_thresholds.update(data)
     print(f"[CONFIG] Updated thresholds: {audio_thresholds}")
     return jsonify({"status": "success", "thresholds": audio_thresholds})
 
-@socketio.on('start_listening')
+
+@socketio.on("start_listening")
 def handle_start_listening():
     """Start listening for audio"""
     global is_listening, audio_stream, p_audio, actual_sample_rate, num_channels
@@ -374,10 +398,6 @@ def handle_start_listening():
 
         # Initialize PyAudio
         p_audio = pyaudio.PyAudio()
-
-        # Find loopback device (system audio)
-        wasapi_info = p_audio.get_host_api_info_by_type(pyaudio.paWASAPI)
-        default_speakers = p_audio.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
 
         # Look for loopback device
         loopback_device = None
@@ -394,8 +414,8 @@ def handle_start_listening():
 
         # Get loopback device info
         loopback_info = p_audio.get_device_info_by_index(loopback_device)
-        actual_sample_rate = int(loopback_info['defaultSampleRate'])
-        num_channels = int(loopback_info['maxInputChannels'])
+        actual_sample_rate = int(loopback_info["defaultSampleRate"])
+        num_channels = int(loopback_info["maxInputChannels"])
         print(f"Audio config: {num_channels} channels @ {actual_sample_rate}Hz")
 
         # Start recording from loopback
@@ -406,14 +426,15 @@ def handle_start_listening():
             input=True,
             frames_per_buffer=CHUNK_SIZE,
             input_device_index=loopback_device,
-            stream_callback=audio_callback
+            stream_callback=audio_callback,
         )
         audio_stream.start_stream()
 
-        socketio.emit('status', {'listening': True})
+        socketio.emit("status", {"listening": True})
         print("Started listening to system audio...")
 
-@socketio.on('stop_listening')
+
+@socketio.on("stop_listening")
 def handle_stop_listening():
     """Stop listening for audio"""
     global is_listening, audio_stream, p_audio
@@ -428,28 +449,30 @@ def handle_stop_listening():
         p_audio.terminate()
         p_audio = None
 
-    socketio.emit('status', {'listening': False})
+    socketio.emit("status", {"listening": False})
     print("Stopped listening...")
 
-@socketio.on('disconnect')
+
+@socketio.on("disconnect")
 def handle_disconnect():
     """Handle client disconnect - stop listening and clean up"""
     print("Client disconnected, stopping audio capture...")
     handle_stop_listening()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     print("Loading configuration...")
     print("Initializing models (this may take a minute)...")
     initialize_models()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Polyglot 🌍 - Real-time Audio Translator")
-    print("="*60)
-    print(f"\nOpen your browser to: http://localhost:5000")
+    print("=" * 60)
+    print("\nOpen your browser to: http://localhost:5000")
     print(f"Device: {Config.DEVICE}")
     print(f"Whisper Model: {Config.WHISPER_MODEL}")
     print(f"Translation Model: {Config.TRANSLATION_MODEL}")
     print(f"Target languages: {', '.join([lang['name'] for lang in Config.TARGET_LANGUAGES])}")
     print("\nPress Ctrl+C to stop\n")
-    
-    socketio.run(app, debug=False, host='0.0.0.0', port=5000)
+
+    socketio.run(app, debug=False, host="0.0.0.0", port=5000)

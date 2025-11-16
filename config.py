@@ -66,14 +66,14 @@ class Config:
 
     # Audio processing configuration
     SAMPLE_RATE = 16000  # Whisper expects 16kHz audio
-    CHUNK_SIZE = 1024    # Audio buffer chunk size
+    CHUNK_SIZE = 1024  # Audio buffer chunk size
 
     # Minimum audio level to process (prevents hallucinations during silence)
     # If average audio level is below this, skip transcription
     MIN_AUDIO_LEVEL = 0.01
 
     # File paths
-    AUDIO_DIR = "audio"           # Directory to save captured audio files
+    AUDIO_DIR = "audio"  # Directory to save captured audio files
     TRANSCRIPT_FILE = "transcript.txt"  # File to append all transcripts
 
     @classmethod
