@@ -1,0 +1,57 @@
+name: Pre-commit Checks
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install pre-commit
+      run: |
+        python -m pip install --upgrade pip
+        pip install pre-commit
+
+    - name: Check for trailing whitespace
+      run: |
+        # Find files with trailing whitespace
+        if git grep -I --line-number '\s$' -- '*.py' '*.md' '*.html' '*.css' '*.js' || true; then
+          echo "WARNING: Found trailing whitespace in files above"
+        fi
+
+    - name: Check for merge conflicts
+      run: |
+        # Check for unresolved merge conflict markers
+        if git grep -n -E '^(<<<<<<<|=======|>>>>>>>)' -- . ':!.github' || true; then
+          echo "ERROR: Found merge conflict markers"
+          exit 1
+        fi
+
+    - name: Validate Python syntax
+      run: |
+        python -m py_compile config.py app.py
+
+    - name: Check file encodings
+      run: |
+        # Ensure all Python files are UTF-8
+        for file in *.py; do
+          if [ -f "$file" ]; then
+            file -b --mime-encoding "$file" | grep -q utf-8 || echo "WARNING: $file may not be UTF-8"
+          fi
+        done
+
+    - name: Check for print statements
+      run: |
+        # Find print() calls (should use logging instead in production)
+        if git grep -n 'print(' -- '*.py' | grep -v '# DEBUG' || true; then
+          echo "INFO: Consider using logging instead of print() for production code"
+        fi
