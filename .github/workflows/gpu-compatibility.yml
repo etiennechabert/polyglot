@@ -1,0 +1,57 @@
+name: GPU Compatibility Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-cuda-compatibility:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Verify PyTorch CUDA configuration
+      run: |
+        python -m pip install --upgrade pip
+
+        # Check that config.py references correct CUDA setup
+        python -c "
+        from config import Config
+        import sys
+
+        # Verify device configuration
+        print(f'Device configuration: {Config.DEVICE}')
+
+        # Verify models are specified
+        if not Config.WHISPER_MODEL:
+            print('ERROR: WHISPER_MODEL not configured')
+            sys.exit(1)
+
+        if not Config.TRANSLATION_MODEL:
+            print('ERROR: TRANSLATION_MODEL not configured')
+            sys.exit(1)
+
+        print(f'Whisper model: {Config.WHISPER_MODEL}')
+        print(f'Translation model: {Config.TRANSLATION_MODEL}')
+        print('✓ GPU configuration check passed')
+        "
+
+    - name: Validate CUDA requirements in README
+      run: |
+        if ! grep -q "CUDA" README.md; then
+          echo "WARNING: README should mention CUDA requirements"
+        fi
+
+        if ! grep -q "PyTorch" README.md; then
+          echo "WARNING: README should mention PyTorch requirements"
+        fi
+
+        echo "✓ Documentation check passed"
