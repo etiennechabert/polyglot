@@ -114,6 +114,9 @@ def initialize_models():
     if "/" in Config.WHISPER_MODEL:
         # Model already has namespace (e.g., distil-whisper/distil-large-v3)
         whisper_model_name = Config.WHISPER_MODEL
+    elif Config.WHISPER_MODEL == "turbo":
+        # Turbo is a special case: maps to large-v3-turbo
+        whisper_model_name = "openai/whisper-large-v3-turbo"
     else:
         # Simple model name needs openai/whisper- prefix (e.g., medium -> openai/whisper-medium)
         whisper_model_name = f"openai/whisper-{Config.WHISPER_MODEL}"
@@ -557,7 +560,7 @@ def transcribe_and_translate(audio_data, audio_duration):
         # Write to transcript file
         with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
             for seg in segments_with_speakers:
-                f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['speaker']}: {seg['text']}\n")
+                f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['text']}\n")
 
         # IMMEDIATELY send transcription to UI (before translations)
         # This makes the UI feel much more responsive
