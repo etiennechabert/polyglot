@@ -521,27 +521,28 @@
     </div>
 
     <script>
+        {% raw %}
         const socket = io();
         let isListening = false;
         let config = {};
         const transcripts = [];
 
-        // Available languages for M2M100
+        // Available languages for M2M100 with flag emojis
         const availableLanguages = [
-            {code: 'en', name: 'English'},
-            {code: 'de', name: 'German'},
-            {code: 'fr', name: 'French'},
-            {code: 'es', name: 'Spanish'},
-            {code: 'it', name: 'Italian'},
-            {code: 'pt', name: 'Portuguese'},
-            {code: 'nl', name: 'Dutch'},
-            {code: 'pl', name: 'Polish'},
-            {code: 'ru', name: 'Russian'},
-            {code: 'zh', name: 'Chinese'},
-            {code: 'ja', name: 'Japanese'},
-            {code: 'ko', name: 'Korean'},
-            {code: 'ar', name: 'Arabic'},
-            {code: 'hi', name: 'Hindi'}
+            {code: 'en', name: 'English', flag: '🇬🇧'},
+            {code: 'de', name: 'German', flag: '🇩🇪'},
+            {code: 'fr', name: 'French', flag: '🇫🇷'},
+            {code: 'es', name: 'Spanish', flag: '🇪🇸'},
+            {code: 'it', name: 'Italian', flag: '🇮🇹'},
+            {code: 'pt', name: 'Portuguese', flag: '🇵🇹'},
+            {code: 'nl', name: 'Dutch', flag: '🇳🇱'},
+            {code: 'pl', name: 'Polish', flag: '🇵🇱'},
+            {code: 'ru', name: 'Russian', flag: '🇷🇺'},
+            {code: 'zh', name: 'Chinese', flag: '🇨🇳'},
+            {code: 'ja', name: 'Japanese', flag: '🇯🇵'},
+            {code: 'ko', name: 'Korean', flag: '🇰🇷'},
+            {code: 'ar', name: 'Arabic', flag: '🇸🇦'},
+            {code: 'hi', name: 'Hindi', flag: '🇮🇳'}
         ];
 
         let debugMode = false;
@@ -596,20 +597,33 @@
 
             // Create panels for all target languages (2x2 grid)
             config.target_languages.forEach(lang => {
+                // Find the language in availableLanguages to get the flag
+                const langInfo = availableLanguages.find(l => l.code === lang.code);
+                const flag = langInfo ? langInfo.flag : '🌐';
+
+                console.log('Lang:', lang.code, 'Flag:', flag, 'LangInfo:', langInfo);
+
                 const panel = document.createElement('div');
                 panel.className = 'panel';
                 panel.id = `panel-${lang.code}`;
-                panel.innerHTML = `
-                    <h2>🔤 ${lang.name}</h2>
-                    <div id="translation-${lang.code}" class="translation-content">
-                        <div class="empty-state">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
-                            </svg>
-                            <p>Waiting for translations...</p>
-                        </div>
+
+                const h2 = document.createElement('h2');
+                h2.textContent = `${flag} ${lang.name}`;
+
+                const translationContent = document.createElement('div');
+                translationContent.id = `translation-${lang.code}`;
+                translationContent.className = 'translation-content';
+                translationContent.innerHTML = `
+                    <div class="empty-state">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
+                        </svg>
+                        <p>Waiting for translations...</p>
                     </div>
                 `;
+
+                panel.appendChild(h2);
+                panel.appendChild(translationContent);
                 container.appendChild(panel);
             });
         }
@@ -863,6 +877,7 @@
                 closeSettings();
             }
         });
+        {% endraw %}
     </script>
 </body>
 </html>

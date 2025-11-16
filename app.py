@@ -6,7 +6,9 @@ Captures system audio and translates speech into multiple languages simultaneous
 import queue
 import threading
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -19,10 +21,18 @@ from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, pipeli
 
 from config import Config
 
+# Suppress CUDA compatibility warning for RTX 5080 (sm_120)
+# PyTorch nightly works fine with backward compatibility
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.cuda")
+
 # Configuration from config.py
-TRANSCRIPT_FILE = Path(Config.TRANSCRIPT_FILE)
 SAMPLE_RATE = Config.SAMPLE_RATE
 CHUNK_SIZE = Config.CHUNK_SIZE
+
+# Create timestamped transcript file
+TRANSCRIPTS_DIR = Path("transcripts")
+TRANSCRIPTS_DIR.mkdir(exist_ok=True)
+TRANSCRIPT_FILE = TRANSCRIPTS_DIR / f"transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
 # Dynamic audio detection thresholds (can be changed via API)
 audio_thresholds = Config.get_audio_thresholds()
@@ -46,6 +56,26 @@ num_channels = 2  # Will be set to the actual number of channels
 def initialize_models():
     """Initialize Whisper and M2M100 models"""
     global transcription_pipe, translation_model, translation_tokenizer
+
+    # CRITICAL: Ensure CUDA is available - this app requires GPU
+    import torch
+    if not torch.cuda.is_available():
+        error_msg = (
+            "\n" + "=" * 80 + "\n"
+            "CRITICAL ERROR: CUDA/GPU is NOT available!\n"
+            "This application requires GPU acceleration to run efficiently.\n"
+            f"PyTorch version: {torch.__version__}\n"
+            f"CUDA available: {torch.cuda.is_available()}\n\n"
+            "To fix this:\n"
+            "1. Uninstall CPU-only PyTorch:\n"
+            "   pip uninstall -y torch torchvision torchaudio\n\n"
+            "2. Reinstall with CUDA support:\n"
+            "   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n\n"
+            "3. Verify NVIDIA drivers are installed and GPU is detected\n"
+            + "=" * 80 + "\n"
+        )
+        print(error_msg)
+        raise RuntimeError("CUDA is not available - GPU acceleration is required!")
 
     device = Config.DEVICE
     print(f"Initializing models on {device}...")
@@ -120,39 +150,26 @@ def translate_text(text, source_lang, target_lang):
         return f"[Translation error: {str(e)}]"
 
 
-def transcribe_and_translate(audio_data):
+def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation"""
     global is_processing
 
     try:
         # Transcribe using resampled audio (auto-detect language)
-        print("[TRANSCRIBE] Starting Whisper transcription...")
-        start_time = time.time()
         result = transcription_pipe(audio_data)
-        transcribe_time = time.time() - start_time
-        print(f"[TRANSCRIBE] Completed in {transcribe_time:.2f} seconds")
-
         transcript = result["text"].strip()
 
         if transcript:
-            print(f"[TRANSCRIBE] Result: {transcript[:100]}...")
-
-            # Append to transcript file
+            # Append to transcript file with timestamp and duration
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                f.write(f"{transcript}\n")
-            print(f"[FILE] Appended to {TRANSCRIPT_FILE}")
+                f.write(f"[{timestamp}] [{audio_duration:.2f}s] {transcript}\n")
 
             # Detect source language
             try:
                 source_lang = detect(transcript)
-                print(f"[LANGUAGE] Detected: {source_lang}")
             except LangDetectException:
                 source_lang = "en"
-                print(f"[LANGUAGE] Detection failed, defaulting to: {source_lang}")
-
-            # Prepare translations in parallel
-            print(f"[TRANSLATE] Starting parallel translation to {len(Config.TARGET_LANGUAGES)} languages...")
-            trans_start = time.time()
 
             def translate_to_language(lang_info):
                 target_lang = lang_info["code"]
@@ -166,9 +183,6 @@ def transcribe_and_translate(audio_data):
                 for target_lang, translated in results:
                     translations[target_lang] = translated
 
-            trans_time = time.time() - trans_start
-            print(f"[TRANSLATE] All translations completed in {trans_time:.2f}s")
-
             # Emit to frontend
             socketio.emit(
                 "new_translation",
@@ -179,12 +193,6 @@ def transcribe_and_translate(audio_data):
                     "timestamp": time.time(),
                 },
             )
-
-            total_time = time.time() - start_time
-            print(f"[AUDIO] ===== PROCESSING COMPLETE (Total: {total_time:.2f}s) =====")
-        else:
-            print("[TRANSCRIBE] Empty transcript, skipping")
-
     except Exception as e:
         print(f"[ERROR] Processing error: {e}")
         import traceback
@@ -212,6 +220,16 @@ def process_audio():
         try:
             # Skip if already processing
             if is_processing:
+                # Safety check: if buffer is 3x max size, force release the lock
+                # This prevents getting stuck if background thread crashes
+                max_chunks = int(actual_sample_rate * audio_thresholds["max_audio_length"] / CHUNK_SIZE)
+                if len(buffer) > max_chunks * 3:
+                    print(f"[AUDIO] SAFETY: Releasing stuck processing lock (buffer: {len(buffer)} > {max_chunks * 3})")
+                    is_processing = False
+                    buffer = []
+                    silence_counter = 0
+                    continue
+
                 # Continue collecting audio into buffer even while processing
                 # This prevents losing audio between sentences
                 try:
@@ -233,7 +251,6 @@ def process_audio():
 
                     # Emit debug data showing we're still collecting audio
                     min_chunks = int(actual_sample_rate * audio_thresholds["min_audio_length"] / CHUNK_SIZE)
-                    max_chunks = int(actual_sample_rate * audio_thresholds["max_audio_length"] / CHUNK_SIZE)
 
                     socketio.emit(
                         "debug_data",
@@ -333,10 +350,13 @@ def process_audio():
                     is_processing = False
                     continue
 
+                # Calculate audio duration
+                audio_duration = len(audio_resampled) / SAMPLE_RATE
+
                 # Launch background thread for transcription and translation
                 # This keeps the main loop responsive for WebSocket updates
                 processing_thread = threading.Thread(
-                    target=transcribe_and_translate, args=(audio_resampled,), daemon=True
+                    target=transcribe_and_translate, args=(audio_resampled, audio_duration), daemon=True
                 )
                 processing_thread.start()
 
@@ -472,7 +492,7 @@ if __name__ == "__main__":
     initialize_models()
 
     print("\n" + "=" * 60)
-    print("Polyglot 🌍 - Real-time Audio Translator")
+    print("Polyglot - Real-time Audio Translator")
     print("=" * 60)
     print("\nOpen your browser to: http://localhost:5000")
     print(f"Device: {Config.DEVICE}")
