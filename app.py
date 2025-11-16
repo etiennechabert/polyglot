@@ -218,6 +218,16 @@ def process_audio():
         try:
             # Skip if already processing
             if is_processing:
+                # Safety check: if buffer is 3x max size, force release the lock
+                # This prevents getting stuck if background thread crashes
+                max_chunks = int(actual_sample_rate * audio_thresholds["max_audio_length"] / CHUNK_SIZE)
+                if len(buffer) > max_chunks * 3:
+                    print(f"[AUDIO] SAFETY: Releasing stuck processing lock (buffer: {len(buffer)} > {max_chunks * 3})")
+                    is_processing = False
+                    buffer = []
+                    silence_counter = 0
+                    continue
+
                 # Continue collecting audio into buffer even while processing
                 # This prevents losing audio between sentences
                 try:
@@ -239,7 +249,6 @@ def process_audio():
 
                     # Emit debug data showing we're still collecting audio
                     min_chunks = int(actual_sample_rate * audio_thresholds["min_audio_length"] / CHUNK_SIZE)
-                    max_chunks = int(actual_sample_rate * audio_thresholds["max_audio_length"] / CHUNK_SIZE)
 
                     socketio.emit(
                         "debug_data",
