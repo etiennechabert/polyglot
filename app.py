@@ -143,45 +143,52 @@ def initialize_models():
         print(f"      [OK] Loaded successfully (CPU)")
     print()
 
-    # Initialize Speaker Diarization (ALWAYS ENABLED)
-    print(f"[3/3] Loading Speaker Diarization: {Config.DIARIZATION_MODEL}")
-    if not Config.HF_TOKEN:
-        error_msg = (
-            "\n" + "=" * 80 + "\n"
-            "CRITICAL ERROR: HF_TOKEN not set!\n"
-            "Speaker diarization requires a HuggingFace token.\n\n"
-            "To fix this:\n"
-            "1. Copy .env.example to .env\n"
-            "2. Get a token at: https://huggingface.co/settings/tokens\n"
-            "3. Accept model terms at: https://huggingface.co/pyannote/speaker-diarization-3.1\n"
-            "4. Add your token to .env file: HF_TOKEN=your_token_here\n"
-            + "=" * 80 + "\n"
+    # Initialize Speaker Diarization (conditionally)
+    diarization_pipeline = None
+    if Config.ENABLE_DIARIZATION:
+        print(f"[3/3] Loading Speaker Diarization: {Config.DIARIZATION_MODEL}")
+        if not Config.HF_TOKEN:
+            error_msg = (
+                "\n" + "=" * 80 + "\n"
+                "CRITICAL ERROR: HF_TOKEN not set!\n"
+                "Speaker diarization requires a HuggingFace token.\n\n"
+                "To fix this:\n"
+                "1. Copy .env.example to .env\n"
+                "2. Get a token at: https://huggingface.co/settings/tokens\n"
+                "3. Accept model terms at: https://huggingface.co/pyannote/speaker-diarization-3.1\n"
+                "4. Add your token to .env file: HF_TOKEN=your_token_here\n"
+                + "=" * 80 + "\n"
+            )
+            print(error_msg)
+            raise RuntimeError("HF_TOKEN is required for speaker diarization!")
+
+        diarization_pipeline = DiarizationPipeline.from_pretrained(
+            Config.DIARIZATION_MODEL,
+            token=Config.HF_TOKEN
         )
-        print(error_msg)
-        raise RuntimeError("HF_TOKEN is required for speaker diarization!")
 
-    diarization_pipeline = DiarizationPipeline.from_pretrained(
-        Config.DIARIZATION_MODEL,
-        token=Config.HF_TOKEN
-    )
+        # Move pipeline to GPU if available
+        if device == "cuda":
+            diarization_pipeline.to(torch.device("cuda"))
+            total_mem = torch.cuda.memory_allocated(0) / 1024**3
+            diarization_mem = total_mem - translation_mem
+            print(f"      [OK] Loaded successfully")
+            print(f"      GPU Memory: {total_mem:.2f} GB allocated (total)")
+            print(f"      Model Size: ~{diarization_mem:.2f} GB")
+        else:
+            print(f"      [OK] Loaded successfully (CPU)")
 
-    # Move pipeline to GPU if available
-    if device == "cuda":
-        diarization_pipeline.to(torch.device("cuda"))
-        total_mem = torch.cuda.memory_allocated(0) / 1024**3
-        diarization_mem = total_mem - translation_mem
-        print(f"      [OK] Loaded successfully")
-        print(f"      GPU Memory: {total_mem:.2f} GB allocated (total)")
-        print(f"      Model Size: ~{diarization_mem:.2f} GB")
+        print(f"      Configuration:")
+        print(f"      - Clustering threshold: {Config.DIARIZATION_CLUSTERING_THRESHOLD}")
+        print(f"      - Min speaker duration: {Config.MIN_SPEAKER_DURATION}s")
+        print(f"      - Min duration on: {Config.MIN_DURATION_ON}s")
+        print(f"      - Min duration off: {Config.MIN_DURATION_OFF}s")
+        print()
     else:
-        print(f"      [OK] Loaded successfully (CPU)")
-
-    print(f"      Configuration:")
-    print(f"      - Clustering threshold: {Config.DIARIZATION_CLUSTERING_THRESHOLD}")
-    print(f"      - Min speaker duration: {Config.MIN_SPEAKER_DURATION}s")
-    print(f"      - Min duration on: {Config.MIN_DURATION_ON}s")
-    print(f"      - Min duration off: {Config.MIN_DURATION_OFF}s")
-    print()
+        print(f"[3/3] Speaker Diarization: DISABLED")
+        print(f"      Speaker identification is turned off (ENABLE_DIARIZATION=False)")
+        print(f"      All transcriptions will appear without speaker labels.")
+        print()
 
     print("=" * 80)
     print("ALL MODELS LOADED SUCCESSFULLY!")
