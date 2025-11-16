@@ -52,7 +52,7 @@ class Config:
     # Maximum audio duration (seconds) before forcing processing
     # INCREASE for longer sentences
     # DECREASE if sentences are cut mid-speech
-    MAX_AUDIO_LENGTH = 30.0
+    MAX_AUDIO_LENGTH = 100.0
 
     # Volume level considered as silence (0.0 to 1.0)
     # INCREASE if breaking at small pauses
