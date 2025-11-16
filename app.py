@@ -145,7 +145,7 @@ def transcribe_and_translate(audio_data, audio_duration):
             # Append to transcript file with timestamp and duration
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                f.write(f"[{timestamp}] [Duration: {audio_duration:.2f}s] {transcript}\n")
+                f.write(f"[{timestamp}] [{audio_duration:.2f}s] {transcript}\n")
             print(f"[FILE] Appended to {TRANSCRIPT_FILE}")
 
             # Detect source language
