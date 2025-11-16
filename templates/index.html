@@ -526,22 +526,22 @@
         let config = {};
         const transcripts = [];
 
-        // Available languages for M2M100
+        // Available languages for M2M100 with flag emojis
         const availableLanguages = [
-            {code: 'en', name: 'English'},
-            {code: 'de', name: 'German'},
-            {code: 'fr', name: 'French'},
-            {code: 'es', name: 'Spanish'},
-            {code: 'it', name: 'Italian'},
-            {code: 'pt', name: 'Portuguese'},
-            {code: 'nl', name: 'Dutch'},
-            {code: 'pl', name: 'Polish'},
-            {code: 'ru', name: 'Russian'},
-            {code: 'zh', name: 'Chinese'},
-            {code: 'ja', name: 'Japanese'},
-            {code: 'ko', name: 'Korean'},
-            {code: 'ar', name: 'Arabic'},
-            {code: 'hi', name: 'Hindi'}
+            {code: 'en', name: 'English', flag: '🇬🇧'},
+            {code: 'de', name: 'German', flag: '🇩🇪'},
+            {code: 'fr', name: 'French', flag: '🇫🇷'},
+            {code: 'es', name: 'Spanish', flag: '🇪🇸'},
+            {code: 'it', name: 'Italian', flag: '🇮🇹'},
+            {code: 'pt', name: 'Portuguese', flag: '🇵🇹'},
+            {code: 'nl', name: 'Dutch', flag: '🇳🇱'},
+            {code: 'pl', name: 'Polish', flag: '🇵🇱'},
+            {code: 'ru', name: 'Russian', flag: '🇷🇺'},
+            {code: 'zh', name: 'Chinese', flag: '🇨🇳'},
+            {code: 'ja', name: 'Japanese', flag: '🇯🇵'},
+            {code: 'ko', name: 'Korean', flag: '🇰🇷'},
+            {code: 'ar', name: 'Arabic', flag: '🇸🇦'},
+            {code: 'hi', name: 'Hindi', flag: '🇮🇳'}
         ];
 
         let debugMode = false;
@@ -596,11 +596,15 @@
 
             // Create panels for all target languages (2x2 grid)
             config.target_languages.forEach(lang => {
+                // Find the language in availableLanguages to get the flag
+                const langInfo = availableLanguages.find(l => l.code === lang.code);
+                const flag = langInfo ? langInfo.flag : '🌐';
+
                 const panel = document.createElement('div');
                 panel.className = 'panel';
                 panel.id = `panel-${lang.code}`;
                 panel.innerHTML = `
-                    <h2>🔤 ${lang.name}</h2>
+                    <h2>${flag} ${lang.name}</h2>
                     <div id="translation-${lang.code}" class="translation-content">
                         <div class="empty-state">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
