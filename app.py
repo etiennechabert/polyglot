@@ -140,13 +140,30 @@ def process_audio():
             if is_processing:
                 # Drain queue during processing to avoid buildup
                 drained = 0
-                try:
-                    audio_queue.get_nowait()
-                    drained += 1
-                except queue.Empty:
-                    pass
+                while True:
+                    try:
+                        audio_queue.get_nowait()
+                        drained += 1
+                    except queue.Empty:
+                        break
                 if drained > 0:
                     print(f"[AUDIO] Drained {drained} chunks while processing")
+
+                # Keep UI responsive - emit processing status
+                socketio.emit(
+                    "debug_data",
+                    {
+                        "audio_level": 0,
+                        "buffer_chunks": 0,
+                        "silence_counter": 0,
+                        "is_processing": True,
+                        "min_chunks": 0,
+                        "max_chunks": 0,
+                        "silence_threshold": audio_thresholds["silence_threshold"],
+                        "silence_chunks_req": audio_thresholds["silence_chunks"],
+                    },
+                )
+                time.sleep(0.1)  # Avoid tight loop
                 continue
 
             # Get audio chunk
