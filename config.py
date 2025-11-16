@@ -2,11 +2,25 @@
 Configuration for Polyglot - Real-time Multi-Language Audio Translator
 """
 
+import os
+from pathlib import Path
+
 import torch
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class Config:
     """Application configuration"""
+
+    # Secrets and API Keys
+    # HuggingFace token for speaker diarization model
+    HF_TOKEN = os.getenv("HF_TOKEN")
+
+    # Debug mode - enables detailed logging
+    DEBUG = True
 
     # Device configuration
     # Options: "cuda" for GPU, "cpu" for CPU
@@ -16,14 +30,37 @@ class Config:
     # Whisper model configuration
     # Options: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3"
     # Larger models = better accuracy but slower and more VRAM
-    # large-v3 is the most accurate (requires ~10GB VRAM)
-    WHISPER_MODEL = "large-v3"
+    # large-v3: ~10GB VRAM, most accurate, SLOW (~15-20s per audio chunk)
+    # medium: ~5GB VRAM, good accuracy, FASTER (~5-8s per audio chunk)
+    # base: ~1GB VRAM, decent accuracy, FASTEST (~2-3s per audio chunk)
+    WHISPER_MODEL = "medium"
+
+    # Speaker diarization configuration
+    # pyannote.audio model for speaker detection
+    # Requires HuggingFace token for access: https://huggingface.co/pyannote/speaker-diarization
+    DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
+
+    # Diarization parameters
+    # Minimum duration for a speaker turn (in seconds)
+    # Lower values = more sensitive to speaker changes
+    MIN_SPEAKER_DURATION = 0.3
+
+    # Minimum duration for a speech region (in seconds)
+    MIN_DURATION_ON = 0.0
+
+    # Minimum duration for a non-speech region (in seconds)
+    MIN_DURATION_OFF = 0.0
+
+    # Clustering threshold for speaker separation (0.0 to 1.0)
+    # Lower values = more likely to identify different speakers
+    # Higher values = more conservative, fewer speakers detected
+    # Default is typically 0.7, try 0.5-0.6 for more speaker separation
+    DIARIZATION_CLUSTERING_THRESHOLD = 0.5
 
     # Translation model configuration
     # Options:
-    #   - "facebook/m2m100_418M" (smaller, faster, ~2GB VRAM)
-    #   - "facebook/m2m100_1.2B" (larger, better quality, ~5GB VRAM)
-    # With RTX 5080, we can easily use the 1.2B model for better translations
+    #   - "facebook/m2m100_418M" (smaller, faster, ~2GB VRAM, ~1-2s per segment)
+    #   - "facebook/m2m100_1.2B" (larger, better quality, ~5GB VRAM, ~3-5s per segment)
     TRANSLATION_MODEL = "facebook/m2m100_1.2B"
 
     # Target languages for translation
@@ -31,9 +68,9 @@ class Config:
     # Supported codes: en, de, fr, es, it, pt, nl, pl, ru, zh, ja, ko, ar, hi, etc.
     TARGET_LANGUAGES = [
         {"code": "en", "name": "English"},
-        {"code": "de", "name": "German"},
+       # {"code": "de", "name": "German"},
         {"code": "fr", "name": "French"},
-        {"code": "it", "name": "Italian"},
+       # {"code": "it", "name": "Italian"},
     ]
 
     # Auto-detect source language
@@ -52,17 +89,17 @@ class Config:
     # Maximum audio duration (seconds) before forcing processing
     # INCREASE for longer sentences
     # DECREASE if sentences are cut mid-speech
-    MAX_AUDIO_LENGTH = 100.0
+    MAX_AUDIO_LENGTH = 20
 
     # Volume level considered as silence (0.0 to 1.0)
     # INCREASE if breaking at small pauses
     # DECREASE if not detecting sentence breaks
-    SILENCE_THRESHOLD = 0.01
+    SILENCE_THRESHOLD = 0.015
 
     # Number of consecutive silent chunks to trigger sentence end
     # INCREASE if sentences break too often
     # DECREASE if sentences run together
-    SILENCE_CHUNKS = 15
+    SILENCE_CHUNKS = 20
 
     # Audio processing configuration
     SAMPLE_RATE = 16000  # Whisper expects 16kHz audio
