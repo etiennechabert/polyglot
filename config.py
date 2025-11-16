@@ -22,6 +22,10 @@ class Config:
     # Debug mode - enables detailed logging
     DEBUG = True
 
+    # Speaker diarization toggle
+    # Set to False to disable speaker identification (improves performance)
+    ENABLE_DIARIZATION = os.getenv("ENABLE_DIARIZATION", "True").lower() in ("true", "1", "yes")
+
     # Device configuration
     # Options: "cuda" for GPU, "cpu" for CPU
     # Automatically detects CUDA availability
