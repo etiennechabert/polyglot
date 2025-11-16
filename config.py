@@ -33,11 +33,20 @@ class Config:
 
     # Whisper model configuration
     # Options: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3"
+    # Distilled models: "distil-whisper/distil-large-v3" (English-only, 5-6x faster)
     # Larger models = better accuracy but slower and more VRAM
-    # large-v3: ~10GB VRAM, most accurate, SLOW (~15-20s per audio chunk)
-    # medium: ~5GB VRAM, good accuracy, FASTER (~5-8s per audio chunk)
-    # base: ~1GB VRAM, decent accuracy, FASTEST (~2-3s per audio chunk)
+    # large-v3: ~10GB VRAM, most accurate, multilingual, SLOW (~15-20s per audio chunk)
+    # medium: ~5GB VRAM, good accuracy, multilingual, FASTER (~5-8s per audio chunk)
+    # base: ~1GB VRAM, decent accuracy, multilingual, FASTEST (~2-3s per audio chunk)
+    # NOTE: distil-large-v3 is English-only! Use medium/large-v3 for French/multilingual
     WHISPER_MODEL = "medium"
+
+    # Whisper chunk length for processing long audio (in seconds)
+    # Whisper splits audio longer than this into overlapping chunks
+    # INCREASE for better context (but more VRAM usage)
+    # DECREASE to reduce memory pressure (but may lose context at boundaries)
+    # Recommended: 10-30 seconds
+    WHISPER_CHUNK_LENGTH = 30
 
     # Speaker diarization configuration
     # pyannote.audio model for speaker detection
@@ -72,9 +81,9 @@ class Config:
     # Supported codes: en, de, fr, es, it, pt, nl, pl, ru, zh, ja, ko, ar, hi, etc.
     TARGET_LANGUAGES = [
         {"code": "en", "name": "English"},
-       # {"code": "de", "name": "German"},
         {"code": "fr", "name": "French"},
-       # {"code": "it", "name": "Italian"},
+       #{"code": "de", "name": "German"},
+        #{"code": "it", "name": "Italian"},
     ]
 
     # Auto-detect source language
@@ -93,7 +102,7 @@ class Config:
     # Maximum audio duration (seconds) before forcing processing
     # INCREASE for longer sentences
     # DECREASE if sentences are cut mid-speech
-    MAX_AUDIO_LENGTH = 20
+    MAX_AUDIO_LENGTH = 30
 
     # Volume level considered as silence (0.0 to 1.0)
     # INCREASE if breaking at small pauses
