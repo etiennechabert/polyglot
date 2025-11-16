@@ -138,6 +138,21 @@
             50% { opacity: 0.5; }
         }
 
+        @keyframes debugFlash {
+            0%, 100% {
+                box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+                background: rgba(0, 0, 0, 0.9);
+            }
+            50% {
+                box-shadow: 0 0 40px rgba(16, 185, 129, 1);
+                background: rgba(16, 185, 129, 0.2);
+            }
+        }
+
+        .debug-flash {
+            animation: debugFlash 1s ease-in-out 1;
+        }
+
         .audio-visualizer {
             display: inline-flex;
             align-items: flex-end;
@@ -424,12 +439,9 @@
             </div>
 
             <!-- Other Stats -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; padding-top: 10px; border-top: 1px solid #333;">
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; padding-top: 10px; border-top: 1px solid #333;">
                 <div>
                     <strong style="color: #8b5cf6;">Buffer:</strong> <span id="debugBufferChunks">0</span>
-                </div>
-                <div>
-                    <strong style="color: #8b5cf6;">Processing:</strong> <span id="debugProcessing">No</span>
                 </div>
                 <div>
                     <strong style="color: #8b5cf6;">Min Chunks:</strong> <span id="debugMinChunks">-</span>
@@ -645,19 +657,18 @@
 
                 // Update other stats
                 document.getElementById('debugBufferChunks').textContent = data.buffer_chunks;
-                const processingEl = document.getElementById('debugProcessing');
-                if (data.is_processing) {
-                    processingEl.textContent = 'Yes';
-                    processingEl.style.color = '#10b981';
-                    processingEl.style.fontWeight = 'bold';
-                } else {
-                    processingEl.textContent = 'No';
-                    processingEl.style.color = '#6b7280';
-                    processingEl.style.fontWeight = 'normal';
-                }
                 document.getElementById('debugMinChunks').textContent = data.min_chunks;
                 document.getElementById('debugMaxChunks').textContent = data.max_chunks;
             }
+        });
+
+        socket.on('processing_started', (data) => {
+            // Flash the debug panel when processing starts
+            const debugPanel = document.getElementById('debugPanel');
+            debugPanel.classList.remove('debug-flash');
+            // Trigger reflow to restart animation
+            void debugPanel.offsetWidth;
+            debugPanel.classList.add('debug-flash');
         });
 
         function updateStatus() {
