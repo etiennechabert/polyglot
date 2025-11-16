@@ -10,12 +10,12 @@ pause
 
 echo.
 echo ================================================================================
-echo Step 1/4: Installing PyTorch (stable 2.9.1 with CUDA support)
+echo Step 1/4: Installing PyTorch (2.8.0 with CUDA 12.9 support)
 echo ================================================================================
 echo.
 echo This may take a few minutes...
-echo Installing torch 2.9.1 and torchaudio 2.9.1...
-pip install torch==2.9.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu121
+echo Installing torch 2.8.0+cu129 and torchaudio 2.8.0+cu129...
+pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu129
 if errorlevel 1 (
     echo ERROR: PyTorch installation failed!
     pause
@@ -39,9 +39,9 @@ echo ===========================================================================
 echo Step 3/4: Installing audio and ML libraries
 echo ================================================================================
 echo.
-pip install sounddevice==0.4.6 pyaudiowpatch==0.2.12.7 resampy==0.4.3 soundfile==0.12.1
-pip install "numpy<2.0.0" langdetect python-dotenv
-pip install transformers accelerate sentencepiece protobuf
+pip install sounddevice==0.4.6 pyaudiowpatch==0.2.12.7 resampy==0.4.3 soundfile==0.13.1
+pip install numpy==2.3.4 langdetect==1.0.9 python-dotenv==1.2.1
+pip install transformers==4.57.1 accelerate==1.11.0 sentencepiece==0.2.1 protobuf==6.33.1
 if errorlevel 1 (
     echo ERROR: Audio/ML libraries installation failed!
     pause
@@ -53,7 +53,7 @@ echo ===========================================================================
 echo Step 4/4: Installing speaker diarization
 echo ================================================================================
 echo.
-pip install pyannote.audio pyannote.core
+pip install pyannote.audio==4.0.1 pyannote.core==6.0.1
 if errorlevel 1 (
     echo ERROR: Speaker diarization installation failed!
     pause
