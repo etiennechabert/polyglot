@@ -569,7 +569,7 @@
             <!-- Column 1: Audio Waveform -->
             <div style="background: rgba(0, 0, 0, 0.95); color: #00ff41; padding: 12px; border-radius: 10px; border: 1px solid rgba(0, 255, 65, 0.2);">
                 <h3 style="color: #00ff41; margin-bottom: 10px; font-size: 12px; font-family: 'Courier New', monospace; letter-spacing: 2px; opacity: 0.8;">AUDIO SIGNAL</h3>
-                <div class="audio-visualizer" id="audioVisualizer" style="display: flex; justify-content: center; align-items: flex-end; gap: 2px; height: 120px; background: #000000; border: 1px solid rgba(0, 255, 65, 0.3); padding: 6px;">
+                <div class="audio-visualizer" id="audioVisualizer" style="display: flex; justify-content: center; align-items: flex-end; gap: 2px; height: 120px; background: #000000; border: 1px solid rgba(0, 255, 65, 0.3); padding: 6px; overflow: hidden;">
                     <div class="audio-bar"></div>
                     <div class="audio-bar"></div>
                     <div class="audio-bar"></div>
@@ -635,14 +635,14 @@
 
             <!-- Column 3: Viewer Stats -->
             <div id="viewerStatsPanel" style="display: block; background: rgba(0, 0, 0, 0.9); color: white; padding: 12px; border-radius: 10px;">
-                <h3 style="margin-bottom: 10px; color: #06b6d4; font-size: 14px;">👥 Active Viewers</h3>
+                <h3 style="margin-bottom: 10px; color: #06b6d4; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>👥 Active Viewers</span>
+                    <span style="font-size: 12px; opacity: 0.8; color: rgba(255, 255, 255, 0.8);">
+                        Total: <span id="totalViewers" style="color: #10b981; font-weight: 600;">0</span>
+                    </span>
+                </h3>
                 <div id="viewerStatsList" style="display: flex; gap: 8px; flex-wrap: wrap;">
                     <!-- Will be populated by JavaScript -->
-                </div>
-                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.2);">
-                    <div style="font-size: 12px; opacity: 0.8;">
-                        Total: <span id="totalViewers" style="color: #10b981; font-weight: 600;">0</span>
-                    </div>
                 </div>
             </div>
         </div>
@@ -725,7 +725,14 @@
 
     <script>
         {% raw %}
-        const socket = io();
+        // Configure Socket.IO with auto-reconnect
+        const socket = io({
+            reconnection: true,              // Enable auto-reconnection
+            reconnectionDelay: 1000,         // Start with 1 second delay
+            reconnectionDelayMax: 5000,      // Max 5 seconds between attempts
+            reconnectionAttempts: Infinity,  // Never stop trying
+            timeout: 20000,                  // Connection timeout
+        });
         let isListening = false;
         let config = {};
         const transcripts = [];
@@ -757,6 +764,8 @@
         // Admin login function
         function adminLogin() {
             const password = document.getElementById('adminPasswordInput').value;
+            // Store password in sessionStorage for auto-reconnect
+            sessionStorage.setItem('admin_password', password);
             socket.emit('admin_authenticate', { password: password });
         }
 
@@ -891,13 +900,63 @@
             console.log('Connected to server');
             document.getElementById('connectionDot').className = 'status-dot connected';
             document.getElementById('connectionStatus').textContent = 'Connected';
+
+            // If admin was previously authenticated, re-authenticate on reconnect
+            if (isAuthenticated) {
+                console.log('[RECONNECT] Re-authenticating admin...');
+                const password = sessionStorage.getItem('admin_password');
+                if (password) {
+                    socket.emit('admin_authenticate', { password: password });
+                } else {
+                    // Lost password, need to re-login
+                    console.log('[RECONNECT] No stored password, showing login overlay');
+                    isAuthenticated = false;
+                    document.getElementById('adminLoginOverlay').style.display = 'flex';
+                    document.getElementById('adminContainer').style.display = 'none';
+                }
+            }
         });
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
+        socket.on('disconnect', (reason) => {
+            console.log('Disconnected from server. Reason:', reason);
             document.getElementById('connectionDot').className = 'status-dot disconnected';
             document.getElementById('connectionStatus').textContent = 'Disconnected';
             document.getElementById('listeningIndicator').style.display = 'none';
+        });
+
+        socket.on('connect_error', (error) => {
+            console.log('Connection error:', error);
+            document.getElementById('connectionDot').className = 'status-dot disconnected';
+            document.getElementById('connectionStatus').textContent = 'Connection Error';
+        });
+
+        socket.io.on('reconnect_attempt', (attemptNumber) => {
+            console.log('Reconnection attempt #' + attemptNumber);
+            document.getElementById('connectionDot').className = 'status-dot waiting';
+            document.getElementById('connectionStatus').textContent = 'Reconnecting... (' + attemptNumber + ')';
+        });
+
+        socket.io.on('reconnect', (attemptNumber) => {
+            console.log('Reconnected after ' + attemptNumber + ' attempts');
+            document.getElementById('connectionDot').className = 'status-dot connected';
+            document.getElementById('connectionStatus').textContent = 'Reconnected';
+
+            // Visual feedback - briefly show success message
+            setTimeout(() => {
+                document.getElementById('connectionStatus').textContent = 'Connected';
+            }, 2000);
+        });
+
+        socket.io.on('reconnect_error', (error) => {
+            console.log('Reconnection error:', error);
+            document.getElementById('connectionDot').className = 'status-dot waiting';
+            document.getElementById('connectionStatus').textContent = 'Reconnecting...';
+        });
+
+        socket.io.on('reconnect_failed', () => {
+            console.log('Reconnection failed - giving up');
+            document.getElementById('connectionDot').className = 'status-dot disconnected';
+            document.getElementById('connectionStatus').textContent = 'Connection Failed';
         });
 
         socket.on('status', (data) => {
