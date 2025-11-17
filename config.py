@@ -19,6 +19,9 @@ class Config:
     # HuggingFace token for speaker diarization model
     HF_TOKEN = os.getenv("HF_TOKEN")
 
+    # Admin password for admin access
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+
     # Debug mode - enables detailed logging
     DEBUG = True
 
@@ -79,12 +82,22 @@ class Config:
 
     # Target languages for translation
     # Each entry is a dict with "code" (ISO 639-1) and "name"
-    # Supported codes: en, de, fr, es, it, pt, nl, pl, ru, zh, ja, ko, ar, hi, etc.
+    # Main European languages (available for viewers)
     TARGET_LANGUAGES = [
         {"code": "en", "name": "English"},
+        {"code": "es", "name": "Spanish"},
         {"code": "fr", "name": "French"},
-       #{"code": "de", "name": "German"},
-        #{"code": "it", "name": "Italian"},
+        {"code": "pt", "name": "Portuguese"},
+        {"code": "de", "name": "German"},
+        {"code": "it", "name": "Italian"},
+    ]
+
+    # Admin languages - subset of TARGET_LANGUAGES to display in admin view
+    # System will still translate for all TARGET_LANGUAGES if viewers are watching
+    # This just controls which languages appear in the admin grid
+    ADMIN_LANGUAGES = [
+        {"code": "en", "name": "English"},
+        {"code": "de", "name": "German"},
     ]
 
     # Auto-detect source language
@@ -103,7 +116,7 @@ class Config:
     # Maximum audio duration (seconds) before forcing processing
     # INCREASE for longer sentences
     # DECREASE if sentences are cut mid-speech
-    MAX_AUDIO_LENGTH = 30
+    MAX_AUDIO_LENGTH = 20
 
     # Volume level considered as silence (0.0 to 1.0)
     # INCREASE if breaking at small pauses
@@ -113,7 +126,7 @@ class Config:
     # Number of consecutive silent chunks to trigger sentence end
     # INCREASE if sentences break too often
     # DECREASE if sentences run together
-    SILENCE_CHUNKS = 20
+    SILENCE_CHUNKS = 15
 
     # Audio processing configuration
     SAMPLE_RATE = 16000  # Whisper expects 16kHz audio
