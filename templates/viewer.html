@@ -321,7 +321,7 @@
             font-family: 'Courier New', monospace;
             white-space: nowrap;
             min-width: 45px;
-            padding-top: 0px;
+            padding-top: 2px;
             line-height: 1.6;
             align-self: flex-start;
         }
@@ -331,6 +331,7 @@
             line-height: 1.6;
             font-weight: 400;
             flex: 1;
+            padding-top: 0px;
         }
 
         .status-badge {
@@ -412,8 +413,13 @@
     </div>
 
     <!-- Branding Footer -->
-    <div style="position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%); font-size: 13px; color: rgba(255, 255, 255, 0.7); text-align: center; z-index: 1000; font-family: 'Courier New', monospace; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);">
-        <span style="font-weight: 600;">Polyglot</span> • Built with <span style="color: #ff6b6b; font-size: 14px;">♥</span> at <span style="font-weight: 600;">Lyck(e)bo</span>
+    <div style="position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%); font-size: 13px; color: rgba(255, 255, 255, 0.7); text-align: center; z-index: 1000; font-family: 'Courier New', monospace; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.2); display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 600;">Polyglot</span>
+        <span style="opacity: 0.5; line-height: 1;">•</span>
+        <span>Built with</span>
+        <span style="color: #ff6b6b; font-size: 13px; line-height: 1;">♥</span>
+        <span>at</span>
+        <span style="font-weight: 600;">Lyck(e)bo</span>
     </div>
 
     <script>
@@ -516,10 +522,8 @@
             // Update UI
             document.getElementById('languageSelection').style.display = 'none';
             document.getElementById('viewerContainer').classList.add('active');
-            document.getElementById('selectedFlag').textContent = languageFlags[code] || '🌐';
-            document.getElementById('selectedLanguageName').textContent = name;
             document.getElementById('translationFlag').textContent = languageFlags[code] || '🌐';
-            document.getElementById('translationLanguage').textContent = name + ' Translation';
+            document.getElementById('translationLanguage').textContent = 'Translated to ' + name;
         }
 
         function changeLanguage() {
