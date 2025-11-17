@@ -1,0 +1,1327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polyglot - Real-time Audio Translator</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            min-height: 100vh;
+            padding: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background:
+                radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(72, 198, 239, 0.2) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(255, 95, 109, 0.15) 0%, transparent 50%);
+            animation: backgroundShift 20s ease infinite;
+            z-index: -1;
+        }
+
+        @keyframes backgroundShift {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(30px, -50px) rotate(120deg); }
+            66% { transform: translate(-20px, 20px) rotate(240deg); }
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+        }
+
+        header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 20px 30px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        h1 {
+            color: #ffffff;
+            font-size: 32px;
+            flex-grow: 1;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
+        }
+
+        button:hover::before {
+            left: 100%;
+        }
+
+        #startBtn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+
+        #startBtn:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 8px 30px rgba(16, 185, 129, 0.5);
+        }
+
+        #stopBtn {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+        }
+
+        #stopBtn:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 8px 30px rgba(239, 68, 68, 0.5);
+        }
+
+        #stopBtn:disabled,
+        #startBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        #settingsBtn {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+        }
+
+        #settingsBtn:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 8px 30px rgba(99, 102, 241, 0.5);
+        }
+
+        .status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status.listening {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status.idle {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status.listening .status-dot {
+            background: #10b981;
+        }
+
+        .status.idle .status-dot {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes debugFlash {
+            0%, 100% {
+                box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+                background: rgba(0, 0, 0, 0.9);
+            }
+            50% {
+                box-shadow: 0 0 40px rgba(16, 185, 129, 1);
+                background: rgba(16, 185, 129, 0.2);
+            }
+        }
+
+        .debug-flash {
+            animation: debugFlash 1s ease-in-out 1;
+        }
+
+        .audio-visualizer {
+            display: inline-flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 30px;
+            padding: 0 10px;
+        }
+
+        .audio-bar {
+            width: 3px;
+            background: #00ff41;
+            border-radius: 0px;
+            transition: height 0.1s ease-out, opacity 0.1s ease-out;
+            height: 2px;
+            box-shadow: 0 0 3px rgba(0, 255, 65, 0.4);
+            position: relative;
+            opacity: 0.3;
+        }
+
+        .audio-bar::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: rgba(0, 255, 65, 0.6);
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .language-toggles {
+            display: flex;
+            gap: 10px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        .language-toggle-btn {
+            padding: 10px 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .language-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        .language-toggle-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: #667eea;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            padding: 16px 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            overflow-y: auto;
+            display: none; /* Hidden by default */
+            flex-direction: column;
+            max-height: 60vh;
+        }
+
+        .panel.visible {
+            display: flex;
+        }
+
+        .panel h2 {
+            color: #ffffff;
+            font-size: 18px;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            position: sticky;
+            top: 0;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 10;
+            flex-shrink: 0;
+            font-weight: 600;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .panel.active-language {
+            background: rgba(120, 119, 198, 0.2);
+            border: 2px solid rgba(120, 119, 198, 0.6);
+            box-shadow: 0 8px 32px rgba(120, 119, 198, 0.4), inset 0 0 20px rgba(120, 119, 198, 0.1);
+        }
+
+        .panel.active-language h2 {
+            color: #c7d2fe;
+            font-weight: 700;
+        }
+
+        .content-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .translation-entry {
+            margin-bottom: 10px;
+            padding: 12px 16px;
+            background: rgba(30, 30, 60, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-left: 4px solid rgba(120, 119, 198, 0.6);
+            position: relative;
+            animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .translation-entry.highlight {
+            background: rgba(120, 119, 198, 0.25);
+            border-left-color: #c7d2fe;
+            box-shadow: 0 6px 24px rgba(120, 119, 198, 0.4);
+        }
+
+        .timestamp {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .text {
+            color: #ffffff;
+            line-height: 1.6;
+            font-size: 15px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            position: relative;
+            z-index: 1;
+        }
+
+        .language-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: linear-gradient(135deg, rgba(120, 119, 198, 0.8) 0%, rgba(72, 198, 239, 0.8) 100%);
+            color: white;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            margin-right: 8px;
+            text-transform: uppercase;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #9ca3af;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        #translationsContainer {
+            display: grid;
+            gap: 20px;
+        }
+
+        /* Settings Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #4b5563;
+            font-weight: 600;
+        }
+
+        .language-list {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .language-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            gap: 10px;
+        }
+
+        .language-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* Status indicators */
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+            animation: none;
+        }
+
+        .status-dot.listening {
+            background: #f59e0b;
+            box-shadow: 0 0 10px #f59e0b;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Admin Login Overlay -->
+    <div id="adminLoginOverlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 10000; display: flex; justify-content: center; align-items: center;">
+        <div style="background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); padding: 40px 60px; border-radius: 20px; border: 2px solid rgba(255, 255, 255, 0.2); text-align: center;">
+            <h2 style="color: white; margin-bottom: 30px; font-size: 32px;">🔐 Admin Login</h2>
+            <input type="password" id="adminPasswordInput" placeholder="Enter admin password" style="width: 300px; padding: 15px; font-size: 16px; border-radius: 10px; border: 2px solid rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.1); color: white; margin-bottom: 20px;" />
+            <br>
+            <button onclick="adminLogin()" style="padding: 15px 40px; font-size: 18px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 600;">Login</button>
+            <div id="loginError" style="color: #ef4444; margin-top: 15px; display: none;">Invalid password. Please try again.</div>
+        </div>
+    </div>
+
+    <div class="container" id="adminContainer" style="display: none;">
+        <header>
+            <h1>🌍 Polyglot</h1>
+            <div class="controls">
+                <div class="status-indicator">
+                    <div id="connectionDot" class="status-dot disconnected"></div>
+                    <span id="connectionStatus">Disconnected</span>
+                </div>
+                <div class="status-indicator" style="display: none;" id="listeningIndicator">
+                    <div class="status-dot listening"></div>
+                    <span>🔴 LIVE</span>
+                </div>
+                <div class="audio-visualizer" id="audioVisualizer" style="display: none;">
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                </div>
+                <button id="startBtn">▶️ Start Listening</button>
+                <button id="stopBtn" disabled>⏹️ Stop</button>
+                <button id="settingsBtn">⚙️ Settings</button>
+                <button onclick="downloadTranscript()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">💾 Download Transcript</button>
+            </div>
+        </header>
+
+        <!-- Audio Visualization, Thresholds, and Viewer Stats - 3 Column Layout -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+            <!-- Column 1: Audio Waveform -->
+            <div style="background: rgba(0, 0, 0, 0.95); color: #00ff41; padding: 12px; border-radius: 10px; border: 1px solid rgba(0, 255, 65, 0.2);">
+                <h3 style="color: #00ff41; margin-bottom: 10px; font-size: 12px; font-family: 'Courier New', monospace; letter-spacing: 2px; opacity: 0.8;">AUDIO SIGNAL</h3>
+                <div class="audio-visualizer" id="audioVisualizer" style="display: flex; justify-content: center; align-items: flex-end; gap: 2px; height: 120px; background: #000000; border: 1px solid rgba(0, 255, 65, 0.3); padding: 6px;">
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                </div>
+            </div>
+
+            <!-- Column 2: Threshold Progress Bars -->
+            <div style="background: rgba(0, 0, 0, 0.9); color: #10b981; padding: 12px; border-radius: 10px;">
+                <h3 style="color: #667eea; margin-bottom: 10px; font-size: 14px;">📊 Thresholds</h3>
+
+                <!-- Audio Level Bar -->
+                <div style="margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-bottom: 4px;">
+                        <span>AUDIO LEVEL</span>
+                        <span><span id="debugAudioLevel">0.0000</span> / <span id="debugSilenceThreshold" style="color: #f59e0b;">-</span></span>
+                    </div>
+                    <div style="height: 20px; background: #1a1a1a; border-radius: 10px; overflow: visible; position: relative;">
+                        <div id="audioLevelBar" style="height: 100%; background: linear-gradient(90deg, #10b981 0%, #34d399 100%); width: 0%; transition: width 0.1s ease; box-shadow: 0 0 10px rgba(16, 185, 129, 0.5); border-radius: 10px;"></div>
+                        <!-- Silence threshold indicator line -->
+                        <div id="silenceThresholdLine" style="position: absolute; top: -2px; bottom: -2px; width: 2px; background: #f59e0b; left: 0%; transition: left 0.2s ease; box-shadow: 0 0 4px rgba(245, 158, 11, 0.8);"></div>
+                    </div>
+                </div>
+
+                <!-- Silence Counter Bar -->
+                <div style="margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-bottom: 4px;">
+                        <span>SILENCE</span>
+                        <span><span id="debugSilenceCounter">0</span> / <span id="debugSilenceChunksReq">-</span></span>
+                    </div>
+                    <div style="height: 20px; background: #1a1a1a; border-radius: 10px; overflow: hidden; position: relative;">
+                        <div id="silenceCounterBar" style="height: 100%; background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%); width: 0%; transition: width 0.1s ease; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);"></div>
+                    </div>
+                </div>
+
+                <!-- Buffer Bar -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-bottom: 4px;">
+                        <span>BUFFER</span>
+                        <span><span id="debugBufferChunks">0</span> (<span id="debugMinChunks">-</span>-<span id="debugMaxChunks">-</span>)</span>
+                    </div>
+                    <div style="height: 20px; background: #1a1a1a; border-radius: 10px; overflow: hidden; position: relative;">
+                        <div id="bufferBar" style="height: 100%; background: linear-gradient(90deg, #8b5cf6 0%, #a78bfa 100%); width: 0%; transition: width 0.2s ease; box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column 3: Viewer Stats -->
+            <div id="viewerStatsPanel" style="display: block; background: rgba(0, 0, 0, 0.9); color: white; padding: 12px; border-radius: 10px;">
+                <h3 style="margin-bottom: 10px; color: #06b6d4; font-size: 14px;">👥 Active Viewers</h3>
+                <div id="viewerStatsList" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.2);">
+                    <div style="font-size: 12px; opacity: 0.8;">
+                        Total: <span id="totalViewers" style="color: #10b981; font-weight: 600;">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transcript Display -->
+        <div class="panel" style="display: flex;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2 style="margin: 0;">📝 Transcript</h2>
+                <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
+                    Lag: <span id="adminLagSeconds">0</span>s
+                </div>
+            </div>
+            <div id="transcriptContent" class="translation-content" style="font-size: 18px; line-height: 1.8;">
+                <div class="empty-state">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <p>Waiting for transcription...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <h2>Settings</h2>
+
+            <div class="form-group">
+                <label>Audio Detection Thresholds</label>
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                    <div style="margin-bottom: 15px;" title="Minimum audio duration before processing. INCREASE to avoid tiny fragments. DECREASE to capture shorter sentences.">
+                        <label for="minAudioLength" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Min Audio Length (seconds) ℹ️</span>
+                            <span id="minAudioLengthValue">3.0</span>
+                        </label>
+                        <input type="range" id="minAudioLength" min="1" max="10" step="0.5" value="3.0"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('minAudioLength')"
+                               title="Minimum audio duration before processing. INCREASE to avoid tiny fragments. DECREASE to capture shorter sentences.">
+                    </div>
+
+                    <div style="margin-bottom: 15px;" title="Maximum audio duration before forcing processing. INCREASE for longer sentences. DECREASE if sentences are cut mid-speech.">
+                        <label for="maxAudioLength" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Max Audio Length (seconds) ℹ️</span>
+                            <span id="maxAudioLengthValue">30.0</span>
+                        </label>
+                        <input type="range" id="maxAudioLength" min="10" max="60" step="5" value="30"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('maxAudioLength')"
+                               title="Maximum audio duration before forcing processing. INCREASE for longer sentences. DECREASE if sentences are cut mid-speech.">
+                    </div>
+
+                    <div style="margin-bottom: 15px;" title="Volume level considered as silence. INCREASE if breaking at small pauses. DECREASE if not detecting sentence breaks.">
+                        <label for="silenceThreshold" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Silence Threshold ℹ️</span>
+                            <span id="silenceThresholdValue">0.010</span>
+                        </label>
+                        <input type="range" id="silenceThreshold" min="0.001" max="0.05" step="0.001" value="0.01"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('silenceThreshold')"
+                               title="Volume level considered as silence. INCREASE if breaking at small pauses. DECREASE if not detecting sentence breaks.">
+                    </div>
+
+                    <div title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
+                        <label for="silenceChunks" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Silence Duration (chunks) ℹ️</span>
+                            <span id="silenceChunksValue">30</span>
+                        </label>
+                        <input type="range" id="silenceChunks" min="10" max="100" step="5" value="30"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('silenceChunks')"
+                               title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button onclick="closeSettings()" style="background: #6b7280;">Cancel</button>
+                <button onclick="saveSettings()" style="background: #10b981; color: white;">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        {% raw %}
+        const socket = io();
+        let isListening = false;
+        let config = {};
+        const transcripts = [];
+        let isAuthenticated = false;
+        let viewerStats = {};
+
+        // Available languages for M2M100 with flag emojis
+        const availableLanguages = [
+            {code: 'en', name: 'English', flag: '🇬🇧'},
+            {code: 'de', name: 'German', flag: '🇩🇪'},
+            {code: 'fr', name: 'French', flag: '🇫🇷'},
+            {code: 'es', name: 'Spanish', flag: '🇪🇸'},
+            {code: 'it', name: 'Italian', flag: '🇮🇹'},
+            {code: 'pt', name: 'Portuguese', flag: '🇵🇹'},
+            {code: 'nl', name: 'Dutch', flag: '🇳🇱'},
+            {code: 'pl', name: 'Polish', flag: '🇵🇱'},
+            {code: 'ru', name: 'Russian', flag: '🇷🇺'},
+            {code: 'zh', name: 'Chinese', flag: '🇨🇳'},
+            {code: 'ja', name: 'Japanese', flag: '🇯🇵'},
+            {code: 'ko', name: 'Korean', flag: '🇰🇷'},
+            {code: 'ar', name: 'Arabic', flag: '🇸🇦'},
+            {code: 'hi', name: 'Hindi', flag: '🇮🇳'}
+        ];
+
+        let debugMode = true; // Enable debug mode by default to show thresholds
+        let lastAdminTranslationTime = null;
+        let adminLagTimerInterval = null;
+
+        // Admin login function
+        function adminLogin() {
+            const password = document.getElementById('adminPasswordInput').value;
+            socket.emit('admin_authenticate', { password: password });
+        }
+
+        // Handle Enter key on password input
+        document.addEventListener('DOMContentLoaded', () => {
+            const passwordInput = document.getElementById('adminPasswordInput');
+            if (passwordInput) {
+                passwordInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        adminLogin();
+                    }
+                });
+                passwordInput.focus();
+            }
+        });
+
+        // Download transcript function
+        function downloadTranscript() {
+            window.location.href = '/api/admin/transcript';
+        }
+
+        // Toggle viewer stats panel
+        function toggleViewerStats() {
+            const panel = document.getElementById('viewerStatsPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        }
+
+        // Update viewer stats display
+        function updateViewerStatsDisplay(stats) {
+            viewerStats = stats;
+            const container = document.getElementById('viewerStatsList');
+            const languageFlags = {
+                'en': '🇬🇧', 'fr': '🇫🇷', 'de': '🇩🇪', 'es': '🇪🇸',
+                'it': '🇮🇹', 'pt': '🇵🇹', 'nl': '🇳🇱', 'pl': '🇵🇱',
+                'ru': '🇷🇺', 'zh': '🇨🇳', 'ja': '🇯🇵', 'ko': '🇰🇷', 'ar': '🇸🇦'
+            };
+
+            container.innerHTML = '';
+            let total = 0;
+
+            for (const [langCode, count] of Object.entries(stats)) {
+                total += count;
+                const statBox = document.createElement('div');
+                statBox.style.cssText = 'background: rgba(255, 255, 255, 0.1); padding: 6px 10px; border-radius: 6px; text-align: center; min-width: 50px; display: flex; flex-direction: column; gap: 2px;';
+                statBox.innerHTML = `
+                    <div style="font-size: 11px; font-weight: 600; opacity: 0.7; text-transform: uppercase;">${langCode}</div>
+                    <div style="font-size: 18px; font-weight: 700; color: ${count > 0 ? '#10b981' : '#6b7280'};">${count}</div>
+                `;
+                container.appendChild(statBox);
+            }
+
+            document.getElementById('totalViewers').textContent = total;
+        }
+
+        // Socket event handlers
+        socket.on('admin_authenticated', (data) => {
+            if (data.success) {
+                isAuthenticated = true;
+                document.getElementById('adminLoginOverlay').style.display = 'none';
+                document.getElementById('adminContainer').style.display = 'block';
+                console.log('Admin authenticated successfully');
+            } else {
+                document.getElementById('loginError').style.display = 'block';
+                document.getElementById('adminPasswordInput').value = '';
+                document.getElementById('adminPasswordInput').focus();
+            }
+        });
+
+        socket.on('viewer_stats', (stats) => {
+            updateViewerStatsDisplay(stats);
+        });
+
+        // Load configuration
+        fetch('/api/config')
+            .then(r => r.json())
+            .then(data => {
+                config = data;
+                // Fetch admin-specific languages for display
+                return fetch('/api/admin/languages');
+            })
+            .then(r => r.json())
+            .then(adminLangs => {
+                // Override target_languages with admin subset for UI display
+                config.target_languages = adminLangs;
+                initializeUI();
+            });
+
+        // Load and display thresholds in debug panel
+        fetch('/api/thresholds')
+            .then(r => r.json())
+            .then(thresholds => {
+                // Calculate min/max chunks (assuming 48000Hz sample rate and 1024 chunk size)
+                const sampleRate = 48000;
+                const chunkSize = 1024;
+                const minChunks = Math.floor(sampleRate * thresholds.min_audio_length / chunkSize);
+                const maxChunks = Math.floor(sampleRate * thresholds.max_audio_length / chunkSize);
+
+                document.getElementById('debugMinChunks').textContent = minChunks;
+                document.getElementById('debugMaxChunks').textContent = maxChunks;
+                document.getElementById('debugSilenceThreshold').textContent = thresholds.silence_threshold.toFixed(4);
+                document.getElementById('debugSilenceChunksReq').textContent = thresholds.silence_chunks;
+            });
+
+        function initializeUI() {
+            createTranslationPanels();
+        }
+
+        function toggleDebug() {
+            debugMode = !debugMode;
+            const debugPanel = document.getElementById('debugPanel');
+            const debugBtn = document.getElementById('debugBtn');
+
+            if (debugMode) {
+                debugPanel.style.display = 'block';
+                debugBtn.style.background = '#10b981';
+                debugBtn.textContent = '🐛 Debug ON';
+            } else {
+                debugPanel.style.display = 'none';
+                debugBtn.style.background = '#8b5cf6';
+                debugBtn.textContent = '🐛 Debug';
+            }
+        }
+
+        // No language panels needed - admin just sees transcript
+        function createTranslationPanels() {
+            // No-op - admin view doesn't have language panels anymore
+            console.log('Admin view initialized - transcript only mode');
+        }
+
+        // Socket events
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            document.getElementById('connectionDot').className = 'status-dot connected';
+            document.getElementById('connectionStatus').textContent = 'Connected';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            document.getElementById('connectionDot').className = 'status-dot disconnected';
+            document.getElementById('connectionStatus').textContent = 'Disconnected';
+            document.getElementById('listeningIndicator').style.display = 'none';
+        });
+
+        socket.on('status', (data) => {
+            console.log('[STATUS] Received status:', data.listening);
+            isListening = data.listening;
+            updateStatus();
+            // Show/hide LIVE indicator
+            document.getElementById('listeningIndicator').style.display = data.listening ? 'flex' : 'none';
+        });
+
+        socket.on('new_translation', (data) => {
+            addTranscription(data);
+        });
+
+        socket.on('audio_level', (data) => {
+            updateAudioVisualizer(data.level);
+        });
+
+        socket.on('debug_data', (data) => {
+            if (debugMode) {
+                // Update audio level text and bar
+                const audioLevelEl = document.getElementById('debugAudioLevel');
+                const silenceThresholdEl = document.getElementById('debugSilenceThreshold');
+                if (audioLevelEl) audioLevelEl.textContent = data.audio_level.toFixed(4);
+                if (silenceThresholdEl) silenceThresholdEl.textContent = data.silence_threshold.toFixed(4);
+
+                const audioLevelPercent = Math.min(100, (data.audio_level / 0.1) * 100); // Scale to 0.1 = 100%
+                const audioLevelBar = document.getElementById('audioLevelBar');
+                if (audioLevelBar) audioLevelBar.style.width = audioLevelPercent + '%';
+
+                // Update silence threshold line position
+                const thresholdPercent = Math.min(100, (data.silence_threshold / 0.1) * 100);
+                const silenceThresholdLine = document.getElementById('silenceThresholdLine');
+                if (silenceThresholdLine) silenceThresholdLine.style.left = thresholdPercent + '%';
+
+                // Update silence counter text and bar
+                const debugSilenceCounter = document.getElementById('debugSilenceCounter');
+                const debugSilenceChunksReq = document.getElementById('debugSilenceChunksReq');
+                if (debugSilenceCounter) debugSilenceCounter.textContent = data.silence_counter;
+                if (debugSilenceChunksReq) debugSilenceChunksReq.textContent = data.silence_chunks_req;
+
+                const silencePercent = data.silence_chunks_req > 0
+                    ? Math.min(100, (data.silence_counter / data.silence_chunks_req) * 100)
+                    : 0;
+                const silenceCounterBar = document.getElementById('silenceCounterBar');
+                if (silenceCounterBar) {
+                    silenceCounterBar.style.width = silencePercent + '%';
+
+                    // Change color when silence counter reaches threshold
+                    if (data.silence_counter >= data.silence_chunks_req) {
+                        silenceCounterBar.style.background = 'linear-gradient(90deg, #10b981, #34d399)';
+                    } else {
+                        silenceCounterBar.style.background = 'linear-gradient(90deg, #3b82f6, #60a5fa)';
+                    }
+                }
+
+                // Update buffer stats and bar
+                const debugBufferChunks = document.getElementById('debugBufferChunks');
+                const debugMinChunks = document.getElementById('debugMinChunks');
+                const debugMaxChunks = document.getElementById('debugMaxChunks');
+                if (debugBufferChunks) debugBufferChunks.textContent = data.buffer_chunks;
+                if (debugMinChunks) debugMinChunks.textContent = data.min_chunks;
+                if (debugMaxChunks) debugMaxChunks.textContent = data.max_chunks;
+
+                // Update buffer bar (scale between min and max)
+                const bufferPercent = data.max_chunks > 0
+                    ? Math.min(100, (data.buffer_chunks / data.max_chunks) * 100)
+                    : 0;
+                const bufferBar = document.getElementById('bufferBar');
+                if (bufferBar) {
+                    bufferBar.style.width = bufferPercent + '%';
+
+                    // Change color based on buffer state
+                    if (data.buffer_chunks >= data.max_chunks) {
+                        bufferBar.style.background = 'linear-gradient(90deg, #ef4444 0%, #f87171 100%)'; // Red when full
+                    } else if (data.buffer_chunks >= data.min_chunks) {
+                        bufferBar.style.background = 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)'; // Yellow when at min
+                    } else {
+                        bufferBar.style.background = 'linear-gradient(90deg, #8b5cf6 0%, #a78bfa 100%)'; // Purple otherwise
+                    }
+                }
+            }
+        });
+
+        socket.on('processing_started', (data) => {
+            // Flash the debug panel when processing starts
+            const debugPanel = document.getElementById('debugPanel');
+            debugPanel.classList.remove('debug-flash');
+            // Trigger reflow to restart animation
+            void debugPanel.offsetWidth;
+            debugPanel.classList.add('debug-flash');
+        });
+
+        function updateStatus() {
+            const statusEl = document.getElementById('statusIndicator');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const visualizer = document.getElementById('audioVisualizer');
+
+            if (isListening) {
+                statusEl.className = 'status listening';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>Listening</span>';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                visualizer.style.display = 'inline-flex';
+            } else {
+                statusEl.className = 'status idle';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>Idle</span>';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                visualizer.style.display = 'none';
+            }
+        }
+
+        function updateAudioVisualizer(level) {
+            const bars = document.querySelectorAll('.audio-bar');
+            const maxHeight = 115; // Use more of the available 120px height
+
+            bars.forEach((bar, index) => {
+                // Create a wave effect with proper scaling
+                const time = Date.now() / 300;
+                const waveOffset = Math.sin(time + index * 0.4) * 0.3;
+                const randomFactor = Math.random() * 0.3 + 0.85;
+
+                // level comes in as 0-100 (already multiplied by 100 in Python)
+                // Boost the level for better visibility (multiply by 5x)
+                const scaledLevel = Math.min(1.0, (level / 100) * 5); // Amplify by 5x
+                const baseHeight = scaledLevel * maxHeight * randomFactor * (1 + waveOffset);
+                const height = Math.max(3, baseHeight);
+
+                bar.style.height = height + 'px';
+
+                // Opacity based on level - more transparent when quiet
+                const minOpacity = 0.3;
+                const maxOpacity = 0.95;
+                bar.style.opacity = minOpacity + (scaledLevel * (maxOpacity - minOpacity));
+            });
+        }
+
+        // Update admin lag timer every second
+        function updateAdminLagTimer() {
+            if (lastAdminTranslationTime) {
+                const lagSeconds = Math.floor((Date.now() - lastAdminTranslationTime) / 1000);
+                document.getElementById('adminLagSeconds').textContent = lagSeconds;
+
+                // Change color based on lag
+                const lagTimerEl = document.getElementById('adminLagTimer');
+                if (lagSeconds < 3) {
+                    lagTimerEl.style.color = 'rgba(16, 185, 129, 0.9)'; // Green
+                } else if (lagSeconds < 10) {
+                    lagTimerEl.style.color = 'rgba(245, 158, 11, 0.9)'; // Yellow
+                } else {
+                    lagTimerEl.style.color = 'rgba(239, 68, 68, 0.9)'; // Red
+                }
+            }
+        }
+
+        // Keep track of transcript segments
+        const MAX_TRANSCRIPT_ITEMS = 100;
+        let transcriptSegments = [];
+
+        function addTranscription(data) {
+            const timestamp = new Date(data.timestamp * 1000).toLocaleTimeString();
+            const transcriptContent = document.getElementById('transcriptContent');
+
+            // Update last translation time
+            lastAdminTranslationTime = Date.now();
+
+            // Show lag timer if not already visible
+            document.getElementById('adminLagTimer').style.display = 'block';
+
+            // Start lag timer interval if not already running
+            if (!adminLagTimerInterval) {
+                adminLagTimerInterval = setInterval(updateAdminLagTimer, 1000);
+            }
+
+            // Clear empty state if present
+            if (transcriptContent.querySelector('.empty-state')) {
+                transcriptContent.innerHTML = '';
+            }
+
+            // Add segments to transcript
+            if (data.segments && data.segments.length > 0 && data.is_initial) {
+                data.segments.forEach(segment => {
+                    const segmentText = `[${timestamp}] ${segment.speaker || 'Speaker'}: ${segment.text}`;
+                    transcriptSegments.push(segmentText);
+                });
+
+                // Limit transcript size
+                if (transcriptSegments.length > MAX_TRANSCRIPT_ITEMS) {
+                    transcriptSegments = transcriptSegments.slice(-MAX_TRANSCRIPT_ITEMS);
+                }
+
+                // Render transcript
+                transcriptContent.innerHTML = transcriptSegments.map(text => `
+                    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; border-left: 3px solid #667eea; color: white;">
+                        ${text}
+                    </div>
+                `).join('');
+
+                // Auto-scroll to bottom - need to scroll the parent panel
+                const transcriptPanel = transcriptContent.parentElement;
+                transcriptPanel.scrollTop = transcriptPanel.scrollHeight;
+            }
+
+            // Old translation panel code removed
+            const dummyTarget = { forEach: () => {} };
+            (dummyTarget).forEach(lang => {
+                const translationContent = document.getElementById(`translation-${lang.code}`);
+                if (!translationContent) return;
+                if (translationContent.querySelector('.empty-state')) {
+                    translationContent.innerHTML = '<ul class="content-list"></ul>';
+                }
+
+                let translationList = translationContent.querySelector('.content-list');
+                if (!translationList) {
+                    translationList = document.createElement('ul');
+                    translationList.className = 'content-list';
+                    translationContent.appendChild(translationList);
+                }
+
+                // Handle segments - show each segment with speaker label
+                if (data.segments && data.segments.length > 0) {
+                    // If this is the source language panel, show segments with speakers
+                    if (lang.code === data.source_language) {
+                        // Only add segments on initial message to avoid duplication
+                        if (data.is_initial) {
+                            data.segments.forEach(segment => {
+                                const translationEntry = document.createElement('li');
+                                translationEntry.className = 'translation-entry highlight';
+
+                                translationEntry.innerHTML = `
+                                    <div class="timestamp">
+                                        <span class="language-badge">${lang.code.toUpperCase()}</span>
+                                        ${timestamp}
+                                    </div>
+                                    <div class="text">${segment.text}</div>
+                                `;
+                                translationList.appendChild(translationEntry);
+
+                                setTimeout(() => {
+                                    translationEntry.classList.remove('highlight');
+                                }, 1000);
+                            });
+                        }
+                        // Skip on is_update since source segments are already displayed
+                    } else {
+                        // For non-source languages, show translated segments with same structure
+
+                        if (data.is_initial) {
+                            // Initial message - create placeholder segments
+                            data.segments.forEach((segment, idx) => {
+                                const translationEntry = document.createElement('li');
+                                translationEntry.className = 'translation-entry highlight';
+                                translationEntry.dataset.timestamp = data.timestamp;
+                                translationEntry.dataset.segmentIndex = idx; // Store segment index for later update
+
+                                translationEntry.innerHTML = `
+                                    <div class="timestamp">
+                                        <span class="language-badge">${lang.code.toUpperCase()}</span>
+                                        ${timestamp}
+                                    </div>
+                                    <div class="text"><em style="color: #9ca3af;">Translating...</em></div>
+                                `;
+                                translationList.appendChild(translationEntry);
+
+                                setTimeout(() => {
+                                    translationEntry.classList.remove('highlight');
+                                }, 1000);
+                            });
+                        } else if (data.is_update && data.translated_segments && data.translated_segments[lang.code]) {
+                            // Update message - find and replace placeholder segments with translations
+                            const translatedSegs = data.translated_segments[lang.code];
+
+                            translatedSegs.forEach((segment, idx) => {
+                                const existingEntry = Array.from(translationList.children).find(
+                                    item => item.dataset.timestamp == data.timestamp && item.dataset.segmentIndex == idx
+                                );
+
+                                if (existingEntry) {
+                                    // Replace the text in existing entry
+                                    const textDiv = existingEntry.querySelector('.text');
+                                    if (textDiv) {
+                                        textDiv.textContent = segment.text;
+                                        existingEntry.classList.add('highlight');
+                                        setTimeout(() => {
+                                            existingEntry.classList.remove('highlight');
+                                        }, 1000);
+                                    }
+                                } else {
+                                    // Fallback: create new entry if placeholder not found
+                                    const translationEntry = document.createElement('li');
+                                    translationEntry.className = 'translation-entry highlight';
+
+                                    translationEntry.innerHTML = `
+                                        <div class="timestamp">
+                                            <span class="language-badge">${lang.code.toUpperCase()}</span>
+                                            ${timestamp}
+                                        </div>
+                                        <div class="text">${segment.text}</div>
+                                    `;
+                                    translationList.appendChild(translationEntry);
+
+                                    setTimeout(() => {
+                                        translationEntry.classList.remove('highlight');
+                                    }, 1000);
+                                }
+                            });
+                        }
+                    }
+                } else {
+                    // Fallback to old behavior if no segments
+                    const translationEntry = document.createElement('li');
+                    translationEntry.className = 'translation-entry highlight';
+
+                    let textToDisplay;
+                    if (data.is_initial) {
+                        textToDisplay = lang.code === data.source_language ? data.transcript : '<em style="color: #9ca3af;">Translating...</em>';
+                    } else {
+                        textToDisplay = data.translations[lang.code] || '<em style="color: #9ca3af;">No translation</em>';
+                    }
+
+                    translationEntry.innerHTML = `
+                        <div class="timestamp">
+                            <span class="language-badge">${lang.code.toUpperCase()}</span>
+                            ${timestamp}
+                        </div>
+                        <div class="text">${textToDisplay}</div>
+                    `;
+                    translationList.appendChild(translationEntry);
+
+                    setTimeout(() => {
+                        translationEntry.classList.remove('highlight');
+                    }, 1000);
+                }
+
+                // Auto-scroll to bottom - scroll the panel, not the content div
+                const langPanel = translationContent.closest('.panel');
+                langPanel.scrollTop = langPanel.scrollHeight;
+            });
+        }
+
+        // Control buttons
+        document.getElementById('startBtn').addEventListener('click', () => {
+            socket.emit('start_listening');
+        });
+
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            socket.emit('stop_listening');
+        });
+
+        document.getElementById('settingsBtn').addEventListener('click', () => {
+            openSettings();
+        });
+
+        function openSettings() {
+            const modal = document.getElementById('settingsModal');
+
+            // Load current thresholds
+            loadThresholds();
+
+            modal.classList.add('active');
+        }
+
+        function loadThresholds() {
+            fetch('/api/thresholds')
+                .then(r => r.json())
+                .then(thresholds => {
+                    document.getElementById('minAudioLength').value = thresholds.min_audio_length;
+                    document.getElementById('maxAudioLength').value = thresholds.max_audio_length;
+                    document.getElementById('silenceThreshold').value = thresholds.silence_threshold;
+                    document.getElementById('silenceChunks').value = thresholds.silence_chunks;
+
+                    updateThresholdDisplay('minAudioLength');
+                    updateThresholdDisplay('maxAudioLength');
+                    updateThresholdDisplay('silenceThreshold');
+                    updateThresholdDisplay('silenceChunks');
+                });
+        }
+
+        function updateThresholdDisplay(id) {
+            const value = document.getElementById(id).value;
+            const displayId = id + 'Value';
+            const displayElement = document.getElementById(displayId);
+
+            if (id === 'silenceThreshold') {
+                displayElement.textContent = parseFloat(value).toFixed(3);
+            } else if (id === 'minAudioLength' || id === 'maxAudioLength') {
+                displayElement.textContent = parseFloat(value).toFixed(1);
+            } else {
+                displayElement.textContent = value;
+            }
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        function saveSettings() {
+            // Save thresholds only (no language config for admin)
+            const thresholds = {
+                min_audio_length: parseFloat(document.getElementById('minAudioLength').value),
+                max_audio_length: parseFloat(document.getElementById('maxAudioLength').value),
+                silence_threshold: parseFloat(document.getElementById('silenceThreshold').value),
+                silence_chunks: parseInt(document.getElementById('silenceChunks').value)
+            };
+
+            // Save thresholds
+            fetch('/api/thresholds', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(thresholds)
+            }).then(() => {
+                closeSettings();
+            });
+        }
+
+        // Close modal on outside click
+        document.getElementById('settingsModal').addEventListener('click', (e) => {
+            if (e.target.id === 'settingsModal') {
+                closeSettings();
+            }
+        });
+        {% endraw %}
+    </script>
+</body>
+</html>
