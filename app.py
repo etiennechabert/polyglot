@@ -26,8 +26,8 @@ import torch
 # Solution: Monkey patch transformers.utils.import_utils._torchcodec_available to False
 # This makes transformers think torchcodec is not available, so it won't try to use it
 
-from flask import Flask, jsonify, render_template
-from flask_socketio import SocketIO
+from flask import Flask, jsonify, render_template, request, session
+from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 from langdetect import LangDetectException, detect
 from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, pipeline
 
@@ -57,7 +57,8 @@ TRANSCRIPT_FILE = TRANSCRIPTS_DIR / f"transcript_{datetime.now().strftime('%Y%m%
 audio_thresholds = Config.get_audio_thresholds()
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = os.urandom(24)  # Secret key for sessions
+socketio = SocketIO(app, cors_allowed_origins="*", manage_session=False)
 
 # Global state
 audio_queue = queue.Queue()
@@ -71,6 +72,14 @@ audio_stream = None
 p_audio = None
 actual_sample_rate = 48000  # Will be set to the actual device sample rate
 num_channels = 2  # Will be set to the actual number of channels
+
+# Viewer and session tracking
+# Dictionary to track connected clients: session_id -> {'role': 'admin'/'viewer', 'language': 'en', 'authenticated': bool}
+connected_clients = {}
+# Track which languages have active viewers: {'en': 2, 'fr': 1, 'de': 0}
+active_language_viewers = {lang['code']: 0 for lang in Config.TARGET_LANGUAGES}
+# Track admin sessions
+admin_sessions = set()
 
 
 def initialize_models():
@@ -583,7 +592,24 @@ def transcribe_and_translate(audio_data, audio_duration):
             print(f"\n[WS DEBUG] Full payload being sent:")
             print(json.dumps(ws_payload_initial, indent=2, ensure_ascii=False))
 
-        socketio.emit("new_translation", ws_payload_initial)
+        # Send initial message to admin room and all active language rooms
+        socketio.emit("new_translation", ws_payload_initial, room='admin')
+        for lang_code in active_language_viewers:
+            if active_language_viewers[lang_code] > 0:
+                socketio.emit("new_translation", ws_payload_initial, room=f'lang_{lang_code}')
+
+        # Only translate for languages that have active viewers
+        # We no longer translate all languages just because admin is present
+        # Admin can see translations for languages that have viewers
+        # Also skip translating to the source language (no need for FR -> FR)
+        languages_to_translate = [
+            lang for lang in Config.TARGET_LANGUAGES
+            if active_language_viewers.get(lang["code"], 0) > 0 and lang["code"] != source_lang
+        ]
+
+        print(f"[TRANSLATION] Translating for {len(languages_to_translate)} languages: {[l['code'] for l in languages_to_translate]}")
+        if source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES]:
+            print(f"[TRANSLATION] Skipping {source_lang} (source language, no translation needed)")
 
         # Now translate each segment individually for each language
         def translate_segment_for_language(lang_info, segment):
@@ -596,21 +622,35 @@ def transcribe_and_translate(audio_data, audio_duration):
                 "end": segment["end"]
             }
 
-        # Translate all segments for all languages in parallel
-        translated_segments_by_lang = {lang["code"]: [] for lang in Config.TARGET_LANGUAGES}
+        # Translate all segments for active languages in parallel
+        translated_segments_by_lang = {lang["code"]: [] for lang in languages_to_translate}
 
-        with ThreadPoolExecutor(max_workers=len(Config.TARGET_LANGUAGES) * len(segments_with_speakers)) as executor:
-            # Create all translation tasks
-            futures = []
-            for lang_info in Config.TARGET_LANGUAGES:
-                for segment in segments_with_speakers:
-                    future = executor.submit(translate_segment_for_language, lang_info, segment)
-                    futures.append((future, lang_info["code"]))
+        if languages_to_translate:
+            with ThreadPoolExecutor(max_workers=len(languages_to_translate) * len(segments_with_speakers)) as executor:
+                # Create all translation tasks
+                futures = []
+                for lang_info in languages_to_translate:
+                    for segment in segments_with_speakers:
+                        future = executor.submit(translate_segment_for_language, lang_info, segment)
+                        futures.append((future, lang_info["code"]))
 
-            # Collect results
-            for future, lang_code in futures:
-                _, translated_segment = future.result()
-                translated_segments_by_lang[lang_code].append(translated_segment)
+                # Collect results
+                for future, lang_code in futures:
+                    _, translated_segment = future.result()
+                    translated_segments_by_lang[lang_code].append(translated_segment)
+
+        # Add source language segments (no translation needed, just copy from segments_with_speakers)
+        if source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES]:
+            if active_language_viewers.get(source_lang, 0) > 0:
+                translated_segments_by_lang[source_lang] = [
+                    {
+                        "text": seg["text"],
+                        "speaker": seg["speaker"],
+                        "start": seg["start"],
+                        "end": seg["end"]
+                    }
+                    for seg in segments_with_speakers
+                ]
 
         # Send translations update with per-segment translations
         ws_payload_final = {
@@ -629,7 +669,11 @@ def transcribe_and_translate(audio_data, audio_duration):
             if Config.DEVICE == "cuda":
                 print(f"[GPU MEMORY] After Translations: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
-        socketio.emit("new_translation", ws_payload_final)
+        # Send translations to admin room and language-specific rooms
+        socketio.emit("new_translation", ws_payload_final, room='admin')
+        for lang_code in translated_segments_by_lang.keys():
+            if active_language_viewers.get(lang_code, 0) > 0:
+                socketio.emit("new_translation", ws_payload_final, room=f'lang_{lang_code}')
     except Exception as e:
         print(f"[ERROR] Processing error: {e}")
         import traceback
@@ -671,9 +715,9 @@ def process_audio():
                 try:
                     chunk = audio_queue.get(timeout=0.1)
 
-                    # Calculate audio level for UI
+                    # Calculate audio level for UI (admin only)
                     audio_level = np.abs(chunk).mean()
-                    socketio.emit("audio_level", {"level": float(audio_level * 100)})
+                    socketio.emit("audio_level", {"level": float(audio_level * 100)}, room='admin')
 
                     # Add to buffer for next sentence
                     buffer.append(chunk)
@@ -685,7 +729,7 @@ def process_audio():
                     else:
                         silence_counter = 0
 
-                    # Emit debug data showing we're still collecting audio
+                    # Emit debug data showing we're still collecting audio (admin only)
                     min_chunks = int(actual_sample_rate * audio_thresholds["min_audio_length"] / CHUNK_SIZE)
 
                     socketio.emit(
@@ -700,6 +744,7 @@ def process_audio():
                             "silence_threshold": audio_thresholds["silence_threshold"],
                             "silence_chunks_req": audio_thresholds["silence_chunks"],
                         },
+                        room='admin'
                     )
                 except queue.Empty:
                     pass
@@ -708,15 +753,15 @@ def process_audio():
             # Get audio chunk
             chunk = audio_queue.get(timeout=1)
 
-            # Calculate audio level
+            # Calculate audio level (admin only)
             audio_level = np.abs(chunk).mean()
-            socketio.emit("audio_level", {"level": float(audio_level * 100)})
+            socketio.emit("audio_level", {"level": float(audio_level * 100)}, room='admin')
 
             # Calculate chunk limits dynamically based on current thresholds
             min_chunks = int(actual_sample_rate * audio_thresholds["min_audio_length"] / CHUNK_SIZE)
             max_chunks = int(actual_sample_rate * audio_thresholds["max_audio_length"] / CHUNK_SIZE)
 
-            # Emit debug data for UI
+            # Emit debug data for UI (admin only)
             socketio.emit(
                 "debug_data",
                 {
@@ -729,6 +774,7 @@ def process_audio():
                     "silence_threshold": audio_thresholds["silence_threshold"],
                     "silence_chunks_req": audio_thresholds["silence_chunks"],
                 },
+                room='admin'
             )
 
             # Check if current chunk is silent
@@ -811,8 +857,8 @@ def process_audio():
                 )
                 processing_thread.start()
 
-                # Emit processing started event for UI flash effect
-                socketio.emit("processing_started", {"timestamp": time.time()})
+                # Emit processing started event for UI flash effect (admin only)
+                socketio.emit("processing_started", {"timestamp": time.time()}, room='admin')
 
         except queue.Empty:
             continue
@@ -827,8 +873,20 @@ def process_audio():
 
 @app.route("/")
 def index():
-    """Serve the main page"""
-    return render_template("index.html")
+    """Redirect to viewer page by default"""
+    return render_template("viewer.html")
+
+
+@app.route("/viewer")
+def viewer():
+    """Serve the viewer page"""
+    return render_template("viewer.html")
+
+
+@app.route("/admin")
+def admin():
+    """Serve the admin page"""
+    return render_template("admin.html")
 
 
 @app.route("/api/config", methods=["GET"])
@@ -861,24 +919,172 @@ def update_thresholds():
     return jsonify({"status": "success", "thresholds": audio_thresholds})
 
 
+@app.route("/api/admin/auth", methods=["POST"])
+def admin_auth():
+    """Authenticate admin user"""
+    data = request.json
+    password = data.get("password", "")
+
+    if password == Config.ADMIN_PASSWORD:
+        return jsonify({"status": "success", "authenticated": True})
+    else:
+        return jsonify({"status": "error", "authenticated": False, "message": "Invalid password"}), 401
+
+
+@app.route("/api/languages", methods=["GET"])
+def get_languages():
+    """Get available languages for viewers"""
+    return jsonify(Config.TARGET_LANGUAGES)
+
+
+@app.route("/api/admin/languages", methods=["GET"])
+def get_admin_languages():
+    """Get languages to display in admin view"""
+    return jsonify(Config.ADMIN_LANGUAGES)
+
+
+@app.route("/api/admin/stats", methods=["GET"])
+def get_admin_stats():
+    """Get admin statistics (viewer counts per language)"""
+    return jsonify({
+        "language_viewers": active_language_viewers,
+        "total_viewers": sum(active_language_viewers.values()),
+        "total_admins": len(admin_sessions)
+    })
+
+
+@app.route("/api/admin/transcript", methods=["GET"])
+def download_transcript():
+    """Download the full transcript"""
+    from flask import send_file
+    if TRANSCRIPT_FILE.exists():
+        return send_file(TRANSCRIPT_FILE, as_attachment=True, download_name=TRANSCRIPT_FILE.name)
+    else:
+        return jsonify({"status": "error", "message": "No transcript file found"}), 404
+
+
 @socketio.on("connect")
 def handle_connect():
     """Handle client connection"""
-    print("[DEBUG] Client connected to SocketIO!")
+    print(f"[DEBUG] Client connected to SocketIO! SID: {request.sid}")
+    # Initialize client session
+    connected_clients[request.sid] = {
+        'role': None,
+        'language': None,
+        'authenticated': False
+    }
 
 
 @socketio.on("disconnect")
 def handle_disconnect():
     """Handle client disconnection"""
-    print("[DEBUG] Client disconnected from SocketIO!")
+    print(f"[DEBUG] Client disconnected from SocketIO! SID: {request.sid}")
+
+    # Clean up client session
+    if request.sid in connected_clients:
+        client = connected_clients[request.sid]
+
+        # Update viewer counts if was a viewer
+        if client['role'] == 'viewer' and client['language']:
+            lang = client['language']
+            if lang in active_language_viewers:
+                active_language_viewers[lang] = max(0, active_language_viewers[lang] - 1)
+                print(f"[VIEWER] Viewer left {lang} room. Active viewers for {lang}: {active_language_viewers[lang]}")
+                # Broadcast updated stats to admins
+                socketio.emit('viewer_stats', active_language_viewers, room='admin')
+
+        # Remove from admin sessions if was admin
+        if client['role'] == 'admin' and request.sid in admin_sessions:
+            admin_sessions.discard(request.sid)
+
+        del connected_clients[request.sid]
 
 
-@socketio.on("start_listening")
-def handle_start_listening():
-    """Start listening for audio"""
+@socketio.on("admin_authenticate")
+def handle_admin_authenticate(data):
+    """Authenticate admin user via WebSocket"""
+    password = data.get("password", "")
+
+    if password == Config.ADMIN_PASSWORD:
+        connected_clients[request.sid]['role'] = 'admin'
+        connected_clients[request.sid]['authenticated'] = True
+        admin_sessions.add(request.sid)
+        join_room('admin')
+        print(f"[ADMIN] Admin authenticated: {request.sid}")
+        emit('admin_authenticated', {'success': True})
+        # Send current stats
+        emit('viewer_stats', active_language_viewers)
+        # Send current listening status
+        emit('status', {'listening': is_listening})
+    else:
+        emit('admin_authenticated', {'success': False, 'message': 'Invalid password'})
+
+
+@socketio.on("get_languages")
+def handle_get_languages():
+    """Send available languages to client"""
+    emit('available_languages', Config.TARGET_LANGUAGES)
+
+
+@socketio.on("get_status")
+def handle_get_status():
+    """Send current listening status to client"""
+    emit('status', {'listening': is_listening})
+
+
+@socketio.on("join_language_room")
+def handle_join_language_room(data):
+    """Handle viewer joining a language-specific room"""
+    language = data.get("language")
+
+    if language and language in active_language_viewers:
+        # Update client info
+        connected_clients[request.sid]['role'] = 'viewer'
+        connected_clients[request.sid]['language'] = language
+
+        # Join the language room
+        join_room(f'lang_{language}')
+
+        # Update viewer count
+        active_language_viewers[language] += 1
+
+        print(f"[VIEWER] Viewer joined {language} room. Active viewers for {language}: {active_language_viewers[language]}")
+
+        # Broadcast updated stats to admins
+        socketio.emit('viewer_stats', active_language_viewers, room='admin')
+
+        emit('joined_room', {'language': language, 'success': True})
+
+
+@socketio.on("leave_language_room")
+def handle_leave_language_room(data):
+    """Handle viewer leaving a language-specific room"""
+    language = data.get("language")
+
+    if language and request.sid in connected_clients:
+        client = connected_clients[request.sid]
+
+        # Leave the room
+        leave_room(f'lang_{language}')
+
+        # Update viewer count
+        if language in active_language_viewers:
+            active_language_viewers[language] = max(0, active_language_viewers[language] - 1)
+
+        print(f"[VIEWER] Viewer left {language} room. Active viewers for {language}: {active_language_viewers[language]}")
+
+        # Update client info
+        client['language'] = None
+
+        # Broadcast updated stats to admins
+        socketio.emit('viewer_stats', active_language_viewers, room='admin')
+
+        emit('left_room', {'language': language, 'success': True})
+
+
+def start_listening_internal():
+    """Internal function to start listening - no authentication check"""
     global is_listening, audio_stream, p_audio, actual_sample_rate, num_channels
-
-    print("[DEBUG] handle_start_listening called!")
 
     if not is_listening:
         is_listening = True
@@ -921,14 +1127,26 @@ def handle_start_listening():
         )
         audio_stream.start_stream()
 
-        socketio.emit("status", {"listening": True})
+        socketio.emit("status", {"listening": True})  # Broadcast to all clients
         print("Started listening to system audio...")
 
 
-@socketio.on("stop_listening")
-def handle_stop_listening():
-    """Stop listening for audio"""
+@socketio.on("start_listening")
+def handle_start_listening():
+    """Start listening for audio (admin only)"""
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    print("[DEBUG] handle_start_listening called by admin!")
+    start_listening_internal()
+
+
+def stop_listening_internal():
+    """Internal function to stop listening - no authentication check"""
     global is_listening, audio_stream, p_audio
+
     is_listening = False
 
     if audio_stream:
@@ -940,15 +1158,19 @@ def handle_stop_listening():
         p_audio.terminate()
         p_audio = None
 
-    socketio.emit("status", {"listening": False})
+    socketio.emit("status", {"listening": False})  # Broadcast to all clients
     print("Stopped listening...")
 
 
-@socketio.on("disconnect")
-def handle_disconnect():
-    """Handle client disconnect - stop listening and clean up"""
-    print("Client disconnected, stopping audio capture...")
-    handle_stop_listening()
+@socketio.on("stop_listening")
+def handle_stop_listening():
+    """Stop listening for audio (admin only)"""
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    stop_listening_internal()
 
 
 if __name__ == "__main__":
@@ -1005,7 +1227,7 @@ if __name__ == "__main__":
         def auto_start_listening():
             time.sleep(3)  # Wait for server to fully initialize
             print("[AUTO-LISTEN] Starting audio capture...")
-            handle_start_listening()
+            start_listening_internal()
 
         listen_thread = threading.Thread(target=auto_start_listening, daemon=True)
         listen_thread.start()
