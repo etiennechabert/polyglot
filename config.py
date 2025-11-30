@@ -22,6 +22,21 @@ class Config:
     # Admin password for admin access
     ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 
+    # Viewer password - dynamically generated 3-word passphrase
+    # This is generated at startup and displayed to admin
+    VIEWER_PASSWORD = None  # Set at runtime by generate_viewer_password()
+
+    # Summarization settings
+    ENABLE_SUMMARIZATION = os.getenv("ENABLE_SUMMARIZATION", "True").lower() in ("true", "1", "yes")
+    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "60"))  # Generate summary once per minute
+
+    # Local summarization model
+    # Options:
+    #   - "microsoft/Phi-3-mini-4k-instruct" (3.8B, ~2GB VRAM, fast, good quality)
+    #   - "Qwen/Qwen2-1.5B-Instruct" (1.5B, ~1.5GB VRAM, very fast)
+    #   - "facebook/bart-large-cnn" (specialized summarization, ~1.5GB VRAM)
+    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "Qwen/Qwen2-1.5B-Instruct")
+
     # Debug mode - enables detailed logging
     DEBUG = True
 
