@@ -6,6 +6,7 @@ Captures system audio and translates speech into multiple languages simultaneous
 import argparse
 import os
 import queue
+import random
 import sys
 import threading
 import time
@@ -14,6 +15,25 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+
+# Word list for generating memorable passphrases
+PASSPHRASE_WORDS = [
+    "apple", "banana", "cherry", "dragon", "eagle", "forest", "garden", "harbor",
+    "island", "jungle", "kite", "lemon", "mountain", "night", "ocean", "planet",
+    "queen", "river", "sunset", "thunder", "umbrella", "valley", "winter", "yellow",
+    "zebra", "anchor", "bridge", "castle", "dolphin", "ember", "falcon", "glacier",
+    "horizon", "ivory", "jasmine", "kingdom", "lantern", "meadow", "nebula", "orchid",
+    "phoenix", "quartz", "rainbow", "silver", "temple", "universe", "velvet", "whisper",
+    "crystal", "breeze", "coral", "dawn", "eclipse", "flame", "golden", "harmony",
+    "indigo", "jewel", "karma", "lunar", "marvel", "nimbus", "opal", "prism",
+    "quest", "radiant", "sapphire", "twilight", "unity", "venture", "wonder", "zenith"
+]
+
+
+def generate_viewer_password():
+    """Generate a 3-word passphrase separated by underscores"""
+    words = random.sample(PASSPHRASE_WORDS, 3)
+    return "_".join(words)
 
 import numpy as np
 import pyaudiowpatch as pyaudio
@@ -107,6 +127,7 @@ transcription_pipe = None
 translation_model = None
 translation_tokenizer = None
 diarization_pipeline = None  # Speaker diarization pipeline
+summarization_pipe = None  # Local LLM for summarization
 audio_stream = None
 p_audio = None
 actual_sample_rate = 48000  # Will be set to the actual device sample rate
@@ -119,11 +140,24 @@ connected_clients = {}
 active_language_viewers = {lang['code']: 0 for lang in Config.TARGET_LANGUAGES}
 # Track admin sessions
 admin_sessions = set()
+# Track authenticated viewer sessions
+viewer_sessions = set()
+
+# Live summarization state
+current_summary = {
+    "key_points": [],  # List of main discussion points
+    "current_topic": "",  # Current discussion topic (more detailed)
+    "last_updated": None,
+    "segments_summarized": 0
+}
+summary_lock = threading.Lock()
+last_summary_time = 0
+accumulated_segments = []  # Segments since last summary
 
 
 def initialize_models():
-    """Initialize Whisper, M2M100, and Speaker Diarization models"""
-    global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline
+    """Initialize Whisper, M2M100, Speaker Diarization, and Summarization models"""
+    global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline, summarization_pipe
 
     # CRITICAL: Ensure CUDA is available - this app requires GPU
     if not torch.cuda.is_available():
@@ -156,8 +190,15 @@ def initialize_models():
 
     print()
 
+    # Count total models to load
+    model_count = 3 if not Config.ENABLE_DIARIZATION else 4
+    if Config.ENABLE_SUMMARIZATION:
+        model_count += 1
+    current_model = 0
+
     # Initialize Whisper with word-level timestamps for precise speaker alignment
-    print(f"[1/3] Loading Whisper Model: {Config.WHISPER_MODEL}")
+    current_model += 1
+    print(f"[{current_model}/{model_count}] Loading Whisper Model: {Config.WHISPER_MODEL}")
     # Distil-whisper models use their own namespace, regular models need openai/whisper- prefix
     if "/" in Config.WHISPER_MODEL:
         # Model already has namespace (e.g., distil-whisper/distil-large-v3)
@@ -187,8 +228,9 @@ def initialize_models():
     print()
 
     # Initialize M2M100
+    current_model += 1
     model_name = Config.TRANSLATION_MODEL
-    print(f"[2/3] Loading Translation Model: {model_name}")
+    print(f"[{current_model}/{model_count}] Loading Translation Model: {model_name}")
     translation_model = M2M100ForConditionalGeneration.from_pretrained(model_name)
     translation_tokenizer = M2M100Tokenizer.from_pretrained(model_name)
 
@@ -203,9 +245,10 @@ def initialize_models():
     print()
 
     # Initialize Speaker Diarization (conditionally)
+    current_model += 1
     diarization_pipeline = None
     if Config.ENABLE_DIARIZATION:
-        print(f"[3/3] Loading Speaker Diarization: {Config.DIARIZATION_MODEL}")
+        print(f"[{current_model}/{model_count}] Loading Speaker Diarization: {Config.DIARIZATION_MODEL}")
         if not Config.HF_TOKEN:
             error_msg = (
                 "\n" + "=" * 80 + "\n"
@@ -244,10 +287,38 @@ def initialize_models():
         print(f"      - Min duration off: {Config.MIN_DURATION_OFF}s")
         print()
     else:
-        print(f"[3/3] Speaker Diarization: DISABLED")
+        print(f"[{current_model}/{model_count}] Speaker Diarization: DISABLED")
         print(f"      Speaker identification is turned off (ENABLE_DIARIZATION=False)")
         print(f"      All transcriptions will appear without speaker labels.")
         print()
+
+    # Initialize Summarization Model (conditionally)
+    summarization_pipe = None
+    if Config.ENABLE_SUMMARIZATION:
+        current_model += 1
+        print(f"[{current_model}/{model_count}] Loading Summarization Model: {Config.SUMMARIZATION_MODEL}")
+
+        try:
+            summarization_pipe = pipeline(
+                "text-generation",
+                model=Config.SUMMARIZATION_MODEL,
+                device=0 if device == "cuda" else -1,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                trust_remote_code=True,
+            )
+
+            if device == "cuda":
+                total_mem = torch.cuda.memory_allocated(0) / 1024**3
+                print(f"      [OK] Loaded successfully")
+                print(f"      GPU Memory: {total_mem:.2f} GB allocated (total)")
+            else:
+                print(f"      [OK] Loaded successfully (CPU)")
+            print()
+        except Exception as e:
+            print(f"      [WARNING] Failed to load summarization model: {e}")
+            print(f"      Live summarization will be disabled.")
+            summarization_pipe = None
+            print()
 
     print("=" * 80)
     print("ALL MODELS LOADED SUCCESSFULLY!")
@@ -284,6 +355,145 @@ def detect_language(text):
     except LangDetectException:
         print("Language detection failed, defaulting to English")
         return "en"  # Default to English if detection fails
+
+
+def generate_summary(transcript_text):
+    """Generate a structured summary using the local LLM"""
+    global current_summary, last_summary_time, accumulated_segments
+
+    if summarization_pipe is None:
+        return None
+
+    try:
+        # Build the prompt for structured summary
+        prompt = f"""<|im_start|>system
+You are a meeting summarizer. Analyze the transcript and provide a structured summary.
+Output ONLY valid JSON with this exact format, no other text:
+{{"key_points": ["point 1", "point 2", "point 3"], "current_topic": "detailed description of current discussion"}}
+<|im_end|>
+<|im_start|>user
+Summarize this meeting transcript:
+
+{transcript_text}
+<|im_end|>
+<|im_start|>assistant
+"""
+
+        # Generate summary
+        result = summarization_pipe(
+            prompt,
+            max_new_tokens=500,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            return_full_text=False,
+        )
+
+        generated_text = result[0]["generated_text"].strip()
+
+        # Parse the JSON response
+        import json
+        # Try to extract JSON from the response
+        json_start = generated_text.find("{")
+        json_end = generated_text.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            json_str = generated_text[json_start:json_end]
+            summary_data = json.loads(json_str)
+
+            with summary_lock:
+                current_summary["key_points"] = summary_data.get("key_points", [])[:5]  # Limit to 5 points
+                current_summary["current_topic"] = summary_data.get("current_topic", "")
+                current_summary["last_updated"] = time.time()
+                current_summary["segments_summarized"] = len(accumulated_segments)
+
+            print(f"[SUMMARY] Generated summary with {len(current_summary['key_points'])} key points")
+            return current_summary
+        else:
+            print(f"[SUMMARY] Could not parse JSON from response: {generated_text[:200]}")
+            return None
+
+    except Exception as e:
+        print(f"[SUMMARY] Error generating summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def check_and_generate_summary():
+    """Check if it's time to generate a new summary and do so if needed"""
+    global last_summary_time, accumulated_segments
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        return
+
+    current_time = time.time()
+
+    # Only generate summary if enough time has passed and we have content
+    if (current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
+            and len(accumulated_segments) > 0):
+
+        # Build transcript from accumulated segments
+        transcript_lines = []
+        for seg in accumulated_segments:
+            speaker = seg.get("speaker", "Speaker")
+            text = seg.get("text", "")
+            transcript_lines.append(f"{speaker}: {text}")
+
+        transcript_text = "\n".join(transcript_lines)
+
+        # Only summarize if we have enough content (at least 100 characters)
+        if len(transcript_text) > 100:
+            print(f"[SUMMARY] Generating summary for {len(accumulated_segments)} segments...")
+
+            # Generate in background thread to not block
+            def generate_and_emit():
+                global last_summary_time
+                summary = generate_summary(transcript_text)
+                if summary:
+                    last_summary_time = time.time()
+
+                    # Emit original summary to admin room
+                    socketio.emit('summary_update', summary, room='admin')
+
+                    # Translate and emit to each language room
+                    for lang_code in active_language_viewers:
+                        if active_language_viewers[lang_code] > 0:
+                            # Translate summary for this language
+                            translated_summary = translate_summary(summary, lang_code)
+                            socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+
+            summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
+            summary_thread.start()
+
+
+def translate_summary(summary, target_lang, source_lang="en"):
+    """Translate a summary object to target language"""
+    if target_lang == source_lang:
+        return summary
+
+    try:
+        translated_summary = {
+            "key_points": [],
+            "current_topic": "",
+            "last_updated": summary.get("last_updated"),
+            "segments_summarized": summary.get("segments_summarized", 0)
+        }
+
+        # Translate each key point
+        for point in summary.get("key_points", []):
+            translated_point = translate_text(point, source_lang, target_lang)
+            translated_summary["key_points"].append(translated_point)
+
+        # Translate current topic
+        if summary.get("current_topic"):
+            translated_summary["current_topic"] = translate_text(
+                summary["current_topic"], source_lang, target_lang
+            )
+
+        return translated_summary
+    except Exception as e:
+        print(f"[SUMMARY] Error translating summary to {target_lang}: {e}")
+        return summary  # Return original if translation fails
 
 
 def translate_text(text, source_lang, target_lang):
@@ -609,6 +819,15 @@ def transcribe_and_translate(audio_data, audio_duration):
         with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
             for seg in segments_with_speakers:
                 f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['text']}\n")
+
+        # Accumulate segments for summarization
+        accumulated_segments.extend(segments_with_speakers)
+        # Keep only last 100 segments to avoid memory bloat
+        if len(accumulated_segments) > 100:
+            accumulated_segments = accumulated_segments[-100:]
+
+        # Check if it's time to generate a summary
+        check_and_generate_summary()
 
         # IMMEDIATELY send transcription to UI (before translations)
         # This makes the UI feel much more responsive
@@ -970,6 +1189,28 @@ def admin_auth():
         return jsonify({"status": "error", "authenticated": False, "message": "Invalid password"}), 401
 
 
+@app.route("/api/viewer/auth", methods=["POST"])
+def viewer_auth():
+    """Authenticate viewer user with passphrase"""
+    data = request.json
+    password = data.get("password", "")
+
+    if password == Config.VIEWER_PASSWORD:
+        return jsonify({"status": "success", "authenticated": True})
+    else:
+        return jsonify({"status": "error", "authenticated": False, "message": "Invalid passphrase"}), 401
+
+
+@app.route("/api/viewer/password", methods=["GET"])
+def get_viewer_password():
+    """Get the current viewer password (admin only - requires admin password in header)"""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header == Config.ADMIN_PASSWORD:
+        return jsonify({"password": Config.VIEWER_PASSWORD})
+    else:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+
 @app.route("/api/languages", methods=["GET"])
 def get_languages():
     """Get available languages for viewers"""
@@ -1050,13 +1291,27 @@ def handle_admin_authenticate(data):
         admin_sessions.add(request.sid)
         join_room('admin')
         print(f"[ADMIN] Admin authenticated: {request.sid}")
-        emit('admin_authenticated', {'success': True})
+        emit('admin_authenticated', {'success': True, 'viewer_password': Config.VIEWER_PASSWORD})
         # Send current stats
         emit('viewer_stats', active_language_viewers)
         # Send current listening status
         emit('status', {'listening': is_listening})
     else:
         emit('admin_authenticated', {'success': False, 'message': 'Invalid password'})
+
+
+@socketio.on("viewer_authenticate")
+def handle_viewer_authenticate(data):
+    """Authenticate viewer user via WebSocket"""
+    password = data.get("password", "")
+
+    if password == Config.VIEWER_PASSWORD:
+        connected_clients[request.sid]['authenticated'] = True
+        viewer_sessions.add(request.sid)
+        print(f"[VIEWER] Viewer authenticated: {request.sid}")
+        emit('viewer_authenticated', {'success': True})
+    else:
+        emit('viewer_authenticated', {'success': False, 'message': 'Invalid passphrase'})
 
 
 @socketio.on("get_languages")
@@ -1076,6 +1331,12 @@ def handle_join_language_room(data):
     """Handle viewer joining a language-specific room"""
     language = data.get("language")
 
+    # Check if viewer is authenticated
+    if request.sid not in connected_clients or not connected_clients[request.sid].get('authenticated'):
+        emit('error', {'message': 'Authentication required. Please enter the passphrase.'})
+        emit('joined_room', {'language': language, 'success': False, 'reason': 'not_authenticated'})
+        return
+
     if language and language in active_language_viewers:
         # Update client info
         connected_clients[request.sid]['role'] = 'viewer'
@@ -1091,6 +1352,11 @@ def handle_join_language_room(data):
 
         # Broadcast updated stats to admins
         socketio.emit('viewer_stats', active_language_viewers, room='admin')
+
+        # Send current summary to the new viewer
+        with summary_lock:
+            if current_summary["last_updated"]:
+                emit('summary_update', current_summary)
 
         emit('joined_room', {'language': language, 'success': True})
 
@@ -1220,6 +1486,9 @@ if __name__ == "__main__":
     import atexit
     atexit.register(cleanup_lock_file)
 
+    # Generate viewer password at startup
+    Config.VIEWER_PASSWORD = generate_viewer_password()
+
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Polyglot - Real-time Audio Translator")
     parser.add_argument(
@@ -1252,6 +1521,10 @@ if __name__ == "__main__":
     print(f"Whisper Model: {Config.WHISPER_MODEL}")
     print(f"Translation Model: {Config.TRANSLATION_MODEL}")
     print(f"Target languages: {', '.join([lang['name'] for lang in Config.TARGET_LANGUAGES])}")
+    print(f"\n{'='*60}")
+    print(f"VIEWER PASSPHRASE: {Config.VIEWER_PASSWORD}")
+    print(f"{'='*60}")
+    print("Share this passphrase with viewers to grant them access.")
 
     if args.auto_listen:
         print("\n[AUTO-LISTEN] Will automatically start listening after server starts")
