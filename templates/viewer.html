@@ -44,13 +44,96 @@
             66% { transform: translate(-20px, 20px) rotate(240deg); }
         }
 
-        .language-selection {
+        /* Password Screen */
+        .password-screen {
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             flex-direction: column;
             gap: 30px;
+        }
+
+        .password-screen h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .password-screen p {
+            font-size: 18px;
+            opacity: 0.8;
+            margin-bottom: 20px;
+        }
+
+        .password-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            width: 100%;
+            max-width: 400px;
+            padding: 0 20px;
+        }
+
+        .password-input {
+            padding: 15px 20px;
+            font-size: 18px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            text-align: center;
+            letter-spacing: 2px;
+            backdrop-filter: blur(10px);
+        }
+
+        .password-input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+            letter-spacing: 0;
+        }
+
+        .password-input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .password-submit {
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .password-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .password-error {
+            color: #ff6b6b;
+            font-size: 14px;
+            text-align: center;
+            display: none;
+        }
+
+        /* Language Selection Screen */
+        .language-selection {
+            display: none;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        .language-selection.active {
+            display: flex;
         }
 
         .language-selection h1 {
@@ -129,47 +212,52 @@
             font-weight: 600;
         }
 
+        /* Viewer Container - Split Layout */
         .viewer-container {
             display: none;
             height: 100vh;
-            flex-direction: column;
             padding: 20px;
-            padding-bottom: 30px;
+            gap: 20px;
         }
 
         .viewer-container.active {
             display: flex;
         }
 
-        .viewer-header {
-            display: none;
+        /* Left Panel - Transcript */
+        .transcript-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            overflow: hidden;
         }
 
-        .selected-language {
+        .panel-header {
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-title {
+            font-size: 16px;
+            font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 15px;
-            font-size: 24px;
+            gap: 10px;
         }
 
-        .change-language-btn {
-            padding: 6px 12px;
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 8px;
-            color: white;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.3s ease;
-            text-transform: none;
-            letter-spacing: normal;
+        .panel-title-icon {
+            font-size: 20px;
         }
 
-        .change-language-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        .viewer-status {
+        .header-controls {
             display: flex;
             gap: 10px;
             align-items: center;
@@ -202,10 +290,6 @@
             background: #ef4444;
         }
 
-        .status-dot.waiting {
-            background: #f59e0b;
-        }
-
         .status-dot.reconnecting {
             background: #f59e0b;
             animation: reconnectPulse 1s infinite;
@@ -217,87 +301,37 @@
         }
 
         @keyframes reconnectPulse {
-            0%, 100% {
-                opacity: 1;
-                transform: scale(1);
-            }
-            50% {
-                opacity: 0.4;
-                transform: scale(1.2);
-            }
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(1.2); }
         }
 
-        .transcription-section {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 15px 20px;
-            border-radius: 15px;
-            margin-bottom: 15px;
-            flex: 0 0 25%;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+        .change-language-btn {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
         }
 
-        .transcription-section h3 {
-            font-size: 14px;
-            opacity: 0.7;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            flex-shrink: 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .change-language-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
-        .transcription-header-controls {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .transcription-text {
-            font-size: 16px;
-            line-height: 1.5;
-            opacity: 0.9;
+        .panel-content {
             flex: 1;
             overflow-y: auto;
-        }
-
-        .translation-section {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(20px);
-            border: 2px solid rgba(255, 255, 255, 0.2);
             padding: 20px;
-            border-radius: 20px;
-            flex: 0 0 calc(75% - 15px);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .translation-section h2 {
-            font-size: 18px;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-shrink: 0;
-        }
-
-        #translationsContainer {
-            flex: 1;
-            overflow-y: auto;
         }
 
         .translation-item {
             background: rgba(255, 255, 255, 0.05);
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 15px;
-            border-left: 4px solid rgba(255, 255, 255, 0.3);
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            border-left: 4px solid rgba(102, 126, 234, 0.6);
             animation: slideIn 0.3s ease;
             display: flex;
             gap: 12px;
@@ -305,14 +339,8 @@
         }
 
         @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .translation-item .time {
@@ -322,122 +350,237 @@
             white-space: nowrap;
             min-width: 45px;
             padding-top: 2px;
-            line-height: 1.6;
-            align-self: flex-start;
         }
 
         .translation-item .text {
-            font-size: 14px;
+            font-size: 15px;
             line-height: 1.6;
-            font-weight: 400;
             flex: 1;
-            padding-top: 0px;
         }
 
-        .status-badge {
-            display: inline-flex;
+        /* Right Panel - Summary */
+        .summary-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            overflow: hidden;
+        }
+
+        .summary-section {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .summary-section:last-child {
+            border-bottom: none;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .summary-section-title {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.6;
+            margin-bottom: 12px;
+            display: flex;
             align-items: center;
             gap: 8px;
-            padding: 8px 16px;
-            background: rgba(16, 185, 129, 0.2);
-            border: 1px solid rgba(16, 185, 129, 0.4);
-            border-radius: 20px;
+        }
+
+        .summary-section-title .icon {
+            font-size: 16px;
+        }
+
+        .key-points-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .key-point-item {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             font-size: 14px;
+            line-height: 1.5;
+            display: flex;
+            gap: 10px;
         }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background: #10b981;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
+        .key-point-item:last-child {
+            border-bottom: none;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+        .key-point-bullet {
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .current-topic-content {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .current-topic-text {
+            font-size: 15px;
+            line-height: 1.7;
+            opacity: 0.9;
+        }
+
+        .summary-updated {
+            font-size: 11px;
+            opacity: 0.4;
+            text-align: right;
+            margin-top: 10px;
         }
 
         .no-data {
             text-align: center;
-            padding: 60px 20px;
+            padding: 40px 20px;
             opacity: 0.5;
-            font-size: 18px;
+            font-size: 16px;
+        }
+
+        .no-data .icon {
+            font-size: 40px;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        /* Footer */
+        .footer {
+            position: fixed;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.7);
+            text-align: center;
+            z-index: 1000;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 0.5px;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .footer .heart {
+            color: #ff6b6b;
+            font-size: 13px;
+            line-height: 1;
         }
     </style>
 </head>
 <body>
+    <!-- Password Screen -->
+    <div class="password-screen" id="passwordScreen">
+        <h1>Polyglot Viewer</h1>
+        <p>Enter the passphrase to access the live stream</p>
+        <div class="password-form">
+            <input type="text" class="password-input" id="passphraseInput" placeholder="word_word_word" autocomplete="off">
+            <button class="password-submit" onclick="submitPassphrase()">Enter</button>
+            <div class="password-error" id="passwordError">Invalid passphrase. Please try again.</div>
+        </div>
+    </div>
+
     <!-- Language Selection Screen -->
     <div class="language-selection" id="languageSelection">
-        <h1>🌍 Polyglot Viewer</h1>
-        <p>Select your language to start viewing translations</p>
+        <h1>Select Your Language</h1>
+        <p>Choose which language you'd like to receive translations in</p>
         <div class="flags-container" id="flagsContainer">
             <!-- Flags will be dynamically inserted here -->
         </div>
     </div>
 
-    <!-- Viewer Screen -->
+    <!-- Viewer Screen - Split Layout -->
     <div class="viewer-container" id="viewerContainer">
-        <div class="transcription-section">
-            <h3>
-                <span>Original Transcription</span>
-                <div class="transcription-header-controls">
+        <!-- Left Panel: Transcript/Translation -->
+        <div class="transcript-panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span class="panel-title-icon" id="translationFlag">EN</span>
+                    <span id="translationLanguage">Translation</span>
+                </div>
+                <div class="header-controls">
                     <span class="status-badge">
                         <span id="connectionDot" class="status-dot disconnected"></span>
                         <span id="connectionStatus">Disconnected</span>
                     </span>
-                    <span class="status-badge" id="listeningBadge" style="display: none;">
-                        <span class="status-dot waiting"></span>
-                        <span>Waiting for audio...</span>
-                    </span>
-                    <button class="change-language-btn" onclick="changeLanguage()">Change Language</button>
-                </div>
-            </h3>
-            <div class="transcription-text" id="transcriptionText">Waiting for audio...</div>
-        </div>
-
-        <div class="translation-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h2 style="margin: 0;">
-                    <span id="translationFlag"></span>
-                    <span id="translationLanguage"></span>
-                </h2>
-                <div id="lagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 4px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
-                    Lag: <span id="lagSeconds">0</span>s
+                    <button class="change-language-btn" onclick="changeLanguage()">Change</button>
                 </div>
             </div>
-            <div id="translationsContainer">
-                <div class="no-data">No translations yet. Waiting for speaker to start...</div>
+            <div class="panel-content" id="translationsContainer">
+                <div class="no-data">
+                    <div class="icon">...</div>
+                    <div>Waiting for translations...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Live Summary -->
+        <div class="summary-panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span class="panel-title-icon">...</span>
+                    <span>Live Summary</span>
+                </div>
+                <div id="summaryUpdated" class="summary-updated"></div>
+            </div>
+
+            <!-- Key Points Section -->
+            <div class="summary-section">
+                <div class="summary-section-title">
+                    <span class="icon">...</span>
+                    Key Points Discussed
+                </div>
+                <ul class="key-points-list" id="keyPointsList">
+                    <li class="no-data" style="padding: 20px 0;">No key points yet...</li>
+                </ul>
+            </div>
+
+            <!-- Current Topic Section -->
+            <div class="summary-section">
+                <div class="summary-section-title">
+                    <span class="icon">...</span>
+                    Current Discussion
+                </div>
+                <div class="current-topic-content" id="currentTopicContent">
+                    <div class="no-data" style="padding: 20px 0;">Waiting for discussion to begin...</div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Branding Footer -->
-    <div style="position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%); font-size: 13px; color: rgba(255, 255, 255, 0.7); text-align: center; z-index: 1000; font-family: 'Courier New', monospace; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.2); display: flex; align-items: baseline; gap: 6px;">
+    <!-- Footer -->
+    <div class="footer">
         <span style="font-weight: 600;">Polyglot</span>
-        <span style="opacity: 0.5; line-height: 1;">•</span>
+        <span style="opacity: 0.5;">|</span>
         <span>Built with</span>
-        <span style="color: #ff6b6b; font-size: 13px; line-height: 1;">♥</span>
+        <span class="heart">love</span>
         <span>at</span>
         <span style="font-weight: 600;">Lyck(e)bo</span>
     </div>
 
     <script>
-        // Configure Socket.IO with auto-reconnect
+        // Configure Socket.IO
         const socket = io({
-            reconnection: true,              // Enable auto-reconnection
-            reconnectionDelay: 1000,         // Start with 1 second delay
-            reconnectionDelayMax: 5000,      // Max 5 seconds between attempts
-            reconnectionAttempts: Infinity,  // Never stop trying
-            timeout: 20000,                  // Connection timeout
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            reconnectionAttempts: Infinity,
+            timeout: 20000,
         });
 
+        let isAuthenticated = false;
         let selectedLanguage = null;
-        let lastTranslationTime = null;
-        let lagTimerInterval = null;
         let reconnectAttempts = 0;
 
-        // Supported languages with visual identifiers (using text since Windows doesn't support flag emojis)
+        // Language configuration
         const supportedLanguages = [
             {code: 'en', name: 'English', flag: 'EN'},
             {code: 'es', name: 'Spanish', flag: 'ES'},
@@ -448,63 +591,73 @@
         ];
 
         const languageFlags = {
-            'en': 'EN',
-            'es': 'ES',
-            'fr': 'FR',
-            'pt': 'PT',
-            'de': 'DE',
-            'it': 'IT'
+            'en': 'EN', 'es': 'ES', 'fr': 'FR',
+            'pt': 'PT', 'de': 'DE', 'it': 'IT'
         };
 
-        // Display top 10 languages on page load
+        const languageColors = {
+            'en': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            'es': 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+            'fr': 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+            'pt': 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+            'de': 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+            'it': 'linear-gradient(135deg, #30cfd0 0%, #330867 100%)'
+        };
+
+        // Check for stored authentication
         document.addEventListener('DOMContentLoaded', () => {
+            const storedAuth = sessionStorage.getItem('viewer_authenticated');
+            if (storedAuth === 'true') {
+                isAuthenticated = true;
+                showLanguageSelection();
+            }
+
+            // Allow Enter key to submit passphrase
+            document.getElementById('passphraseInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') submitPassphrase();
+            });
+        });
+
+        function submitPassphrase() {
+            const passphrase = document.getElementById('passphraseInput').value.trim();
+            if (!passphrase) return;
+
+            socket.emit('viewer_authenticate', { password: passphrase });
+        }
+
+        socket.on('viewer_authenticated', (data) => {
+            if (data.success) {
+                isAuthenticated = true;
+                sessionStorage.setItem('viewer_authenticated', 'true');
+                showLanguageSelection();
+            } else {
+                document.getElementById('passwordError').style.display = 'block';
+                document.getElementById('passphraseInput').value = '';
+                document.getElementById('passphraseInput').focus();
+            }
+        });
+
+        function showLanguageSelection() {
+            document.getElementById('passwordScreen').style.display = 'none';
+            document.getElementById('languageSelection').classList.add('active');
             displayLanguageOptions();
-        });
-
-        // Fetch available languages from server
-        socket.on('connect', () => {
-            console.log('Connected to server');
-            socket.emit('get_languages');
-        });
-
-        socket.on('available_languages', (serverLanguages) => {
-            console.log('Server languages received:', serverLanguages);
-            // Update the display with server-supported languages
-            displayLanguageOptions(serverLanguages);
-        });
+        }
 
         function displayLanguageOptions(serverLanguages = null) {
             const container = document.getElementById('flagsContainer');
             container.innerHTML = '';
 
-            // Use server languages if available, otherwise use our supported languages
             let languagesToShow = supportedLanguages;
-
             if (serverLanguages && serverLanguages.length > 0) {
                 const serverCodes = serverLanguages.map(l => l.code);
-                console.log('Server language codes:', serverCodes);
-                console.log('Supported languages:', supportedLanguages.map(l => l.code));
-
-                // Filter to show only languages that exist in both our list and server's list
                 languagesToShow = supportedLanguages.filter(lang => serverCodes.includes(lang.code));
-                console.log('Languages to show:', languagesToShow.map(l => l.code));
             }
-
-            // Color schemes for each language
-            const languageColors = {
-                'en': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',  // Purple
-                'es': 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',  // Pink/Red
-                'fr': 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',  // Blue
-                'pt': 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',  // Green
-                'de': 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',  // Orange
-                'it': 'linear-gradient(135deg, #30cfd0 0%, #330867 100%)'   // Teal
-            };
 
             languagesToShow.forEach(lang => {
                 const button = document.createElement('div');
                 button.className = 'flag-button';
                 button.onclick = () => selectLanguage(lang.code, lang.name);
-                const gradient = languageColors[lang.code] || 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                const gradient = languageColors[lang.code] || languageColors['en'];
                 button.innerHTML = `
                     <div class="flag-icon" style="background: ${gradient};">${lang.flag}</div>
                     <div class="flag-name">${lang.name}</div>
@@ -515,56 +668,43 @@
 
         function selectLanguage(code, name) {
             selectedLanguage = code;
-
-            // Join language-specific room
             socket.emit('join_language_room', { language: code });
 
-            // Update UI
-            document.getElementById('languageSelection').style.display = 'none';
+            document.getElementById('languageSelection').classList.remove('active');
             document.getElementById('viewerContainer').classList.add('active');
-            document.getElementById('translationFlag').textContent = languageFlags[code] || '🌐';
-            document.getElementById('translationLanguage').textContent = 'Translated to ' + name;
+            document.getElementById('translationFlag').textContent = languageFlags[code] || code.toUpperCase();
+            document.getElementById('translationLanguage').textContent = name + ' Translation';
         }
 
         function changeLanguage() {
-            // Leave current room
             if (selectedLanguage) {
                 socket.emit('leave_language_room', { language: selectedLanguage });
             }
 
             // Clear data
-            document.getElementById('transcriptionText').textContent = 'Waiting for audio...';
-            document.getElementById('translationsContainer').innerHTML = '<div class="no-data">No translations yet. Waiting for speaker to start...</div>';
+            document.getElementById('translationsContainer').innerHTML = '<div class="no-data"><div class="icon">...</div><div>Waiting for translations...</div></div>';
+            displayedTranslations = [];
 
             // Show language selection
             document.getElementById('viewerContainer').classList.remove('active');
-            document.getElementById('languageSelection').style.display = 'flex';
+            document.getElementById('languageSelection').classList.add('active');
             selectedLanguage = null;
         }
 
-        // Handle new translations with debouncing to prevent UI freeze
-        const MAX_TRANSLATIONS = 50; // Maximum number of translation items to display
-        let displayedTranslations = []; // Array of {text: string, timestamp: Date}
-        let renderTimeout = null;
-        let pendingUpdate = false;
+        // Translation display
+        const MAX_TRANSLATIONS = 50;
+        let displayedTranslations = [];
 
         function renderTranslations() {
             if (!selectedLanguage || displayedTranslations.length === 0) return;
 
             const container = document.getElementById('translationsContainer');
-
-            // Clear "no data" message
-            if (container.querySelector('.no-data')) {
-                container.innerHTML = '';
-            }
-
-            // Use DocumentFragment for more efficient rendering
             const fragment = document.createDocumentFragment();
+
             displayedTranslations.forEach(item => {
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'translation-item';
 
-                // Time display
                 const timeDiv = document.createElement('div');
                 timeDiv.className = 'time';
                 const time = new Date(item.timestamp);
@@ -574,7 +714,6 @@
                     hour12: false
                 });
 
-                // Text display
                 const textDiv = document.createElement('div');
                 textDiv.className = 'text';
                 textDiv.textContent = item.text;
@@ -584,53 +723,13 @@
                 fragment.appendChild(itemDiv);
             });
 
-            // Replace all children at once
             container.innerHTML = '';
             container.appendChild(fragment);
-
-            // Auto-scroll to bottom
             container.scrollTop = container.scrollHeight;
-            pendingUpdate = false;
-        }
-
-        // Update lag timer every second
-        function updateLagTimer() {
-            if (lastTranslationTime) {
-                const lagSeconds = Math.floor((Date.now() - lastTranslationTime) / 1000);
-                document.getElementById('lagSeconds').textContent = lagSeconds;
-
-                // Change color based on lag
-                const lagTimerEl = document.getElementById('lagTimer');
-                if (lagSeconds < 3) {
-                    lagTimerEl.style.color = 'rgba(16, 185, 129, 0.9)'; // Green
-                } else if (lagSeconds < 10) {
-                    lagTimerEl.style.color = 'rgba(245, 158, 11, 0.9)'; // Yellow
-                } else {
-                    lagTimerEl.style.color = 'rgba(239, 68, 68, 0.9)'; // Red
-                }
-            }
         }
 
         socket.on('new_translation', (data) => {
-            // Update original transcription (lightweight, no debounce needed)
-            if (data.transcript) {
-                document.getElementById('transcriptionText').textContent = data.transcript;
-            }
-
-            // Update translation for selected language (debounced)
             if (selectedLanguage && data.translated_segments && data.translated_segments[selectedLanguage]) {
-                // Update last translation time
-                lastTranslationTime = Date.now();
-
-                // Show lag timer if not already visible
-                document.getElementById('lagTimer').style.display = 'block';
-
-                // Start lag timer interval if not already running
-                if (!lagTimerInterval) {
-                    lagTimerInterval = setInterval(updateLagTimer, 1000);
-                }
-
-                // Add new translated segments to our tracking array with timestamps
                 data.translated_segments[selectedLanguage].forEach(segment => {
                     displayedTranslations.push({
                         text: segment.text,
@@ -638,85 +737,85 @@
                     });
                 });
 
-                // Limit the array size (keep only the last MAX_TRANSLATIONS items)
                 if (displayedTranslations.length > MAX_TRANSLATIONS) {
                     displayedTranslations = displayedTranslations.slice(-MAX_TRANSLATIONS);
                 }
 
-                // Debounce rendering - only render once every 100ms max
-                if (!pendingUpdate) {
-                    pendingUpdate = true;
-                    if (renderTimeout) clearTimeout(renderTimeout);
-                    renderTimeout = setTimeout(renderTranslations, 100);
-                }
+                renderTranslations();
             }
         });
 
+        // Summary updates
+        socket.on('summary_update', (data) => {
+            // Update key points
+            const keyPointsList = document.getElementById('keyPointsList');
+            if (data.key_points && data.key_points.length > 0) {
+                keyPointsList.innerHTML = '';
+                data.key_points.forEach(point => {
+                    const li = document.createElement('li');
+                    li.className = 'key-point-item';
+                    li.innerHTML = `<span class="key-point-bullet">*</span><span>${point}</span>`;
+                    keyPointsList.appendChild(li);
+                });
+            }
+
+            // Update current topic
+            const currentTopicContent = document.getElementById('currentTopicContent');
+            if (data.current_topic) {
+                currentTopicContent.innerHTML = `<div class="current-topic-text">${data.current_topic}</div>`;
+            }
+
+            // Update timestamp
+            if (data.last_updated) {
+                const updateTime = new Date(data.last_updated * 1000);
+                document.getElementById('summaryUpdated').textContent = 'Updated ' + updateTime.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+            }
+        });
+
+        // Connection status
         socket.on('connect', () => {
             console.log('Connected to server');
-            reconnectAttempts = 0; // Reset counter on successful connection
+            reconnectAttempts = 0;
             document.getElementById('connectionDot').className = 'status-dot connected';
             document.getElementById('connectionStatus').textContent = 'Connected';
 
-            // If we had a selected language, rejoin the room
-            if (selectedLanguage) {
-                console.log('Reconnected - rejoining language room:', selectedLanguage);
+            if (isAuthenticated && selectedLanguage) {
                 socket.emit('join_language_room', { language: selectedLanguage });
             }
 
-            // Request current listening status
             socket.emit('get_status');
+            socket.emit('get_languages');
         });
 
-        socket.on('disconnect', (reason) => {
-            console.log('Disconnected from server. Reason:', reason);
+        socket.on('available_languages', (serverLanguages) => {
+            if (document.getElementById('languageSelection').classList.contains('active')) {
+                displayLanguageOptions(serverLanguages);
+            }
+        });
+
+        socket.on('disconnect', () => {
             document.getElementById('connectionDot').className = 'status-dot disconnected';
             document.getElementById('connectionStatus').textContent = 'Disconnected';
-            document.getElementById('listeningBadge').style.display = 'none';
-        });
-
-        socket.on('connect_error', (error) => {
-            console.log('Connection error:', error);
-            document.getElementById('connectionDot').className = 'status-dot disconnected';
-            document.getElementById('connectionStatus').textContent = 'Connection Error';
         });
 
         socket.io.on('reconnect_attempt', (attemptNumber) => {
             reconnectAttempts = attemptNumber;
-            console.log('Reconnection attempt #' + attemptNumber);
-            document.getElementById('connectionDot').className = 'status-dot reconnecting';
-            document.getElementById('connectionStatus').textContent = 'Reconnecting... (' + attemptNumber + ')';
-        });
-
-        socket.io.on('reconnect', (attemptNumber) => {
-            console.log('Reconnected after ' + attemptNumber + ' attempts');
-            document.getElementById('connectionDot').className = 'status-dot connected';
-            document.getElementById('connectionStatus').textContent = 'Reconnected';
-
-            // Visual feedback - briefly show success message
-            setTimeout(() => {
-                document.getElementById('connectionStatus').textContent = 'Connected';
-            }, 2000);
-        });
-
-        socket.io.on('reconnect_error', (error) => {
-            console.log('Reconnection error:', error);
             document.getElementById('connectionDot').className = 'status-dot reconnecting';
             document.getElementById('connectionStatus').textContent = 'Reconnecting...';
         });
 
-        socket.io.on('reconnect_failed', () => {
-            console.log('Reconnection failed - giving up');
-            document.getElementById('connectionDot').className = 'status-dot disconnected';
-            document.getElementById('connectionStatus').textContent = 'Connection Failed';
-        });
-
-        socket.on('status', (data) => {
-            // Update listening status
-            if (data.listening) {
-                document.getElementById('listeningBadge').style.display = 'none'; // Hide waiting badge when actively listening
-            } else {
-                document.getElementById('listeningBadge').style.display = 'flex'; // Show waiting badge
+        socket.on('joined_room', (data) => {
+            if (!data.success && data.reason === 'not_authenticated') {
+                // Session expired, need to re-authenticate
+                sessionStorage.removeItem('viewer_authenticated');
+                isAuthenticated = false;
+                document.getElementById('viewerContainer').classList.remove('active');
+                document.getElementById('languageSelection').classList.remove('active');
+                document.getElementById('passwordScreen').style.display = 'flex';
             }
         });
     </script>
