@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import psutil
 import pyaudiowpatch as pyaudio
 import resampy
 import torch
@@ -120,10 +121,19 @@ active_language_viewers = {lang['code']: 0 for lang in Config.TARGET_LANGUAGES}
 # Track admin sessions
 admin_sessions = set()
 
+# VRAM tracking for admin stats display
+model_vram_usage = {
+    "whisper": 0,
+    "translation": 0,
+    "diarization": 0,
+}
+gpu_total_memory = 0  # Total GPU memory in GB
+
 
 def initialize_models():
     """Initialize Whisper, M2M100, and Speaker Diarization models"""
     global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline
+    global model_vram_usage, gpu_total_memory
 
     # CRITICAL: Ensure CUDA is available - this app requires GPU
     if not torch.cuda.is_available():
@@ -152,6 +162,8 @@ def initialize_models():
 
     if device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
+        gpu_total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"GPU Total Memory: {gpu_total_memory:.2f} GB")
         print(f"Initial GPU Memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
     print()
@@ -180,6 +192,7 @@ def initialize_models():
 
     if device == "cuda":
         whisper_mem = torch.cuda.memory_allocated(0) / 1024**3
+        model_vram_usage["whisper"] = whisper_mem
         print(f"      [OK] Loaded successfully")
         print(f"      GPU Memory: {whisper_mem:.2f} GB allocated")
     else:
@@ -195,6 +208,7 @@ def initialize_models():
     if device == "cuda":
         translation_model = translation_model.cuda()
         translation_mem = torch.cuda.memory_allocated(0) / 1024**3
+        model_vram_usage["translation"] = translation_mem - whisper_mem
         print(f"      [OK] Loaded successfully")
         print(f"      GPU Memory: {translation_mem:.2f} GB allocated (total)")
         print(f"      Model Size: ~{translation_mem - whisper_mem:.2f} GB")
@@ -234,6 +248,7 @@ def initialize_models():
             diarization_pipeline.embedding_batch_size = 16
             total_mem = torch.cuda.memory_allocated(0) / 1024**3
             diarization_mem = total_mem - translation_mem
+            model_vram_usage["diarization"] = diarization_mem
             print(f"      [OK] Loaded successfully")
             print(f"      GPU Memory: {total_mem:.2f} GB allocated (total)")
             print(f"      Model Size: ~{diarization_mem:.2f} GB")
@@ -988,14 +1003,72 @@ def get_admin_languages():
     return jsonify(Config.ADMIN_LANGUAGES)
 
 
-@app.route("/api/admin/stats", methods=["GET"])
-def get_admin_stats():
-    """Get admin statistics (viewer counts per language)"""
-    return jsonify({
+def get_system_stats():
+    """Get system resource statistics including VRAM usage"""
+    stats = {
         "language_viewers": active_language_viewers,
         "total_viewers": sum(active_language_viewers.values()),
-        "total_admins": len(admin_sessions)
-    })
+        "total_admins": len(admin_sessions),
+        "cpu_percent": psutil.cpu_percent(),
+        "ram_percent": psutil.virtual_memory().percent,
+        "ram_used_gb": psutil.virtual_memory().used / 1024**3,
+        "ram_total_gb": psutil.virtual_memory().total / 1024**3,
+    }
+
+    # Add GPU stats if available
+    if torch.cuda.is_available():
+        vram_allocated = torch.cuda.memory_allocated(0) / 1024**3
+        vram_reserved = torch.cuda.memory_reserved(0) / 1024**3
+        stats["gpu"] = {
+            "name": torch.cuda.get_device_name(0),
+            "vram_total_gb": gpu_total_memory,
+            "vram_allocated_gb": vram_allocated,
+            "vram_reserved_gb": vram_reserved,
+            "model_vram": model_vram_usage,
+            # Dynamic VRAM = total allocated - sum of static model usage
+            "vram_dynamic_gb": max(0, vram_allocated - sum(model_vram_usage.values())),
+        }
+    else:
+        stats["gpu"] = None
+
+    return stats
+
+
+@app.route("/api/admin/stats", methods=["GET"])
+def get_admin_stats():
+    """Get admin statistics including system resources"""
+    return jsonify(get_system_stats())
+
+
+# Background stats emitter control
+stats_emitter_running = False
+
+
+def start_stats_emitter():
+    """Start background thread that emits system stats to admin clients every 2 seconds"""
+    global stats_emitter_running
+
+    if stats_emitter_running:
+        return
+
+    stats_emitter_running = True
+
+    def emit_stats_loop():
+        while stats_emitter_running:
+            try:
+                # Only emit if there are admin sessions
+                if len(admin_sessions) > 0:
+                    stats = get_system_stats()
+                    socketio.emit('system_stats', stats, room='admin')
+            except Exception as e:
+                print(f"[STATS] Error emitting stats: {e}")
+
+            # Sleep for 2 seconds between updates
+            time.sleep(2)
+
+    stats_thread = threading.Thread(target=emit_stats_loop, daemon=True)
+    stats_thread.start()
+    print("[STATS] Background stats emitter started")
 
 
 @app.route("/api/admin/transcript", methods=["GET"])
@@ -1249,6 +1322,9 @@ if __name__ == "__main__":
     print("Loading configuration...")
     print("Initializing models (this may take a minute)...")
     initialize_models()
+
+    # Start background stats emitter for admin dashboard
+    start_stats_emitter()
 
     print("\n" + "=" * 60)
     print("Polyglot - Real-time Audio Translator")
