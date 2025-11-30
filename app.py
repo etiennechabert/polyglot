@@ -229,6 +229,9 @@ def initialize_models():
         # Move pipeline to GPU if available
         if device == "cuda":
             diarization_pipeline.to(torch.device("cuda"))
+            # Reduce embedding batch size to prevent VRAM spikes during inference
+            # Default is 32, which can cause memory to spike from ~8GB to ~16GB
+            diarization_pipeline.embedding_batch_size = 16
             total_mem = torch.cuda.memory_allocated(0) / 1024**3
             diarization_mem = total_mem - translation_mem
             print(f"      [OK] Loaded successfully")
