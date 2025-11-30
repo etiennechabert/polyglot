@@ -286,6 +286,7 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
+@torch.inference_mode()
 def translate_text(text, source_lang, target_lang):
     """Translate text using M2M100"""
     if source_lang == target_lang:
@@ -310,6 +311,7 @@ def translate_text(text, source_lang, target_lang):
         return f"[Translation error: {str(e)}]"
 
 
+@torch.inference_mode()
 def perform_speaker_diarization(audio_data, sample_rate):
     """Perform speaker diarization on audio data"""
     if diarization_pipeline is None:
@@ -371,6 +373,7 @@ def perform_speaker_diarization(audio_data, sample_rate):
         return None
 
 
+@torch.inference_mode()
 def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation with speaker diarization"""
     global is_processing
