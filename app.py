@@ -532,6 +532,7 @@ def initialize_models():
 # - Summarization model starts on CPU, moves to GPU only during summary generation
 # - Transcription must wait while summarization model is on GPU to avoid VRAM overflow
 summarization_on_gpu = False  # True when summarization model is loaded on GPU
+summarization_started_at = None  # Timestamp when summarization started (for UI feedback)
 model_rotation_lock = threading.Lock()  # Protects summarization_on_gpu state changes
 transcription_lock = threading.Lock()  # Ensures transcription completes before summarization starts
 
@@ -671,10 +672,13 @@ def generate_summary(previous_overview, new_transcript, time_range="", minutes_s
         time_range: Time range of the full meeting
         minutes_since_start: How long the meeting has been going
     """
-    global current_summary, last_summary_time, all_meeting_segments
+    global current_summary, last_summary_time, all_meeting_segments, summarization_started_at
 
     if summarization_pipe is None:
         return None
+
+    # Track when summarization started (for UI feedback)
+    summarization_started_at = time.time()
 
     # Model rotation: Wait for any in-progress transcription to finish, then load summarization to GPU
     rotation_enabled = Config.ENABLE_MODEL_ROTATION
@@ -779,6 +783,9 @@ Rules:
         return None
 
     finally:
+        # Clear summarization timestamp (UI feedback)
+        # Note: summarization_started_at is already declared global at function start
+        summarization_started_at = None
         # Model rotation: unload summarization to CPU and release transcription lock
         if rotation_enabled:
             unload_summarization_to_cpu()
@@ -1674,6 +1681,7 @@ def get_system_stats():
             },
             # Model rotation status
             "summarization_on_gpu": summarization_on_gpu,
+            "summarization_started_at": summarization_started_at,  # Timestamp for UI elapsed time
             "model_rotation_enabled": Config.ENABLE_MODEL_ROTATION,
         }
     else:
@@ -1704,10 +1712,21 @@ def start_stats_emitter():
     def emit_stats_loop():
         while stats_emitter_running:
             try:
-                # Only emit if there are admin sessions
+                stats = get_system_stats()
+                # Emit full stats to admin sessions
                 if len(admin_sessions) > 0:
-                    stats = get_system_stats()
                     socketio.emit('system_stats', stats, room='admin')
+                # Emit lightweight summarization status to all viewers
+                # This enables the "Generating Summary..." banner
+                if stats.get("gpu") and stats["gpu"].get("summarization_started_at"):
+                    socketio.emit('system_stats', {
+                        "gpu": {
+                            "summarization_started_at": stats["gpu"]["summarization_started_at"]
+                        }
+                    })
+                elif sum(active_language_viewers.values()) > 0:
+                    # Clear banner for viewers when summarization done
+                    socketio.emit('system_stats', {"gpu": {"summarization_started_at": None}})
             except Exception as e:
                 print(f"[STATS] Error emitting stats: {e}")
 
