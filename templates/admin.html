@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Polyglot - Real-time Audio Translator</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {
             margin: 0;
@@ -647,6 +648,62 @@
             </div>
         </div>
 
+        <!-- System Stats Row -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+            <!-- VRAM Usage Chart -->
+            <div style="background: rgba(0, 0, 0, 0.9); color: white; padding: 12px; border-radius: 10px;">
+                <h3 style="margin-bottom: 10px; color: #f59e0b; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🎮 VRAM Usage</span>
+                    <span id="vramTotal" style="font-size: 12px; color: rgba(255, 255, 255, 0.8);">-- / -- GB</span>
+                </h3>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <div style="flex: 1; height: 140px;">
+                        <canvas id="vramChart"></canvas>
+                    </div>
+                    <div id="vramLegend" style="font-size: 11px; min-width: 120px;">
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            <span style="width: 12px; height: 12px; background: #3b82f6; border-radius: 2px;"></span>
+                            <span>Whisper: <span id="vramWhisper">--</span> GB</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            <span style="width: 12px; height: 12px; background: #10b981; border-radius: 2px;"></span>
+                            <span>Translation: <span id="vramTranslation">--</span> GB</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            <span style="width: 12px; height: 12px; background: #f59e0b; border-radius: 2px;"></span>
+                            <span>Diarization: <span id="vramDiarization">--</span> GB</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            <span style="width: 12px; height: 12px; background: #ef4444; border-radius: 2px;"></span>
+                            <span>Dynamic: <span id="vramDynamic">--</span> GB</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 4px; margin-top: 4px;">
+                            <span style="width: 12px; height: 12px; background: #374151; border-radius: 2px;"></span>
+                            <span>Free: <span id="vramFree">--</span> GB</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CPU & RAM History Chart -->
+            <div style="background: rgba(0, 0, 0, 0.9); color: white; padding: 12px; border-radius: 10px;">
+                <h3 style="margin-bottom: 10px; color: #8b5cf6; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>💻 System Resources</span>
+                    <span style="font-size: 12px; color: rgba(255, 255, 255, 0.8);">
+                        CPU: <span id="cpuPercent" style="color: #8b5cf6;">--%</span> |
+                        RAM: <span id="ramPercent" style="color: #06b6d4;">--%</span>
+                    </span>
+                </h3>
+                <div style="height: 140px;">
+                    <canvas id="cpuRamChart"></canvas>
+                </div>
+                <div style="margin-top: 6px; font-size: 11px; color: #999;">
+                    <span id="gpuName">GPU: --</span>
+                </div>
+            </div>
+
+        </div>
+
         <!-- Transcript Display -->
         <div class="panel" style="display: flex;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -738,6 +795,21 @@
         const transcripts = [];
         let isAuthenticated = false;
         let viewerStats = {};
+        let vramChart = null;
+        let cpuRamChart = null;
+
+        // Historical data for charts (store last 60 seconds at 2/s refresh)
+        const MAX_HISTORY_POINTS = 120;
+        const historyData = {
+            labels: [],
+            vramUsed: [],
+            vramWhisper: [],
+            vramTranslation: [],
+            vramDiarization: [],
+            vramDynamic: [],
+            cpu: [],
+            ram: []
+        };
 
         // Available languages for M2M100 with flag emojis
         const availableLanguages = [
@@ -793,6 +865,255 @@
             panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
         }
 
+        // Initialize VRAM chart as stacked area chart
+        function initVramChart() {
+            const ctx = document.getElementById('vramChart').getContext('2d');
+            vramChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Whisper',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.3)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 1,
+                        },
+                        {
+                            label: 'Translation',
+                            data: [],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.3)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 1,
+                        },
+                        {
+                            label: 'Diarization',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.3)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 1,
+                        },
+                        {
+                            label: 'Dynamic',
+                            data: [],
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.3)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 1,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false,
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' GB';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: false,
+                        },
+                        y: {
+                            stacked: true,
+                            min: 0,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)',
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.6)',
+                                font: { size: 10 },
+                                callback: function(value) {
+                                    return value + ' GB';
+                                }
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+        }
+
+        // Initialize CPU/RAM chart as line chart
+        function initCpuRamChart() {
+            const ctx = document.getElementById('cpuRamChart').getContext('2d');
+            cpuRamChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'CPU',
+                            data: [],
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.2)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        },
+                        {
+                            label: 'RAM',
+                            data: [],
+                            borderColor: '#06b6d4',
+                            backgroundColor: 'rgba(6, 182, 212, 0.2)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false,
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': ' + context.parsed.y.toFixed(1) + '%';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: false,
+                        },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)',
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.6)',
+                                font: { size: 10 },
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+        }
+
+        // Update system stats display
+        function updateSystemStats(stats) {
+            // Get current time label
+            const now = new Date();
+            const timeLabel = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            // Add time label to history
+            historyData.labels.push(timeLabel);
+            if (historyData.labels.length > MAX_HISTORY_POINTS) {
+                historyData.labels.shift();
+            }
+
+            // Update CPU & RAM percent displays
+            document.getElementById('cpuPercent').textContent = stats.cpu_percent.toFixed(0) + '%';
+            document.getElementById('ramPercent').textContent = stats.ram_percent.toFixed(0) + '%';
+
+            // Add CPU/RAM to history
+            historyData.cpu.push(stats.cpu_percent);
+            historyData.ram.push(stats.ram_percent);
+            if (historyData.cpu.length > MAX_HISTORY_POINTS) {
+                historyData.cpu.shift();
+                historyData.ram.shift();
+            }
+
+            // Update CPU/RAM chart
+            if (cpuRamChart) {
+                cpuRamChart.data.labels = [...historyData.labels];
+                cpuRamChart.data.datasets[0].data = [...historyData.cpu];
+                cpuRamChart.data.datasets[1].data = [...historyData.ram];
+                cpuRamChart.update('none');
+            }
+
+            // Update GPU stats if available
+            if (stats.gpu) {
+                const gpu = stats.gpu;
+                document.getElementById('gpuName').textContent = 'GPU: ' + gpu.name;
+                document.getElementById('vramTotal').textContent =
+                    gpu.vram_allocated_gb.toFixed(2) + ' / ' + gpu.vram_total_gb.toFixed(2) + ' GB';
+
+                // Update legend values
+                document.getElementById('vramWhisper').textContent = gpu.model_vram.whisper.toFixed(2);
+                document.getElementById('vramTranslation').textContent = gpu.model_vram.translation.toFixed(2);
+                document.getElementById('vramDiarization').textContent = gpu.model_vram.diarization.toFixed(2);
+                document.getElementById('vramDynamic').textContent = gpu.vram_dynamic_gb.toFixed(2);
+                document.getElementById('vramFree').textContent = (gpu.vram_total_gb - gpu.vram_allocated_gb).toFixed(2);
+
+                // Add VRAM data to history
+                historyData.vramWhisper.push(gpu.model_vram.whisper);
+                historyData.vramTranslation.push(gpu.model_vram.translation);
+                historyData.vramDiarization.push(gpu.model_vram.diarization);
+                historyData.vramDynamic.push(gpu.vram_dynamic_gb);
+                if (historyData.vramWhisper.length > MAX_HISTORY_POINTS) {
+                    historyData.vramWhisper.shift();
+                    historyData.vramTranslation.shift();
+                    historyData.vramDiarization.shift();
+                    historyData.vramDynamic.shift();
+                }
+
+                // Update VRAM chart
+                if (vramChart) {
+                    vramChart.data.labels = [...historyData.labels];
+                    vramChart.data.datasets[0].data = [...historyData.vramWhisper];
+                    vramChart.data.datasets[1].data = [...historyData.vramTranslation];
+                    vramChart.data.datasets[2].data = [...historyData.vramDiarization];
+                    vramChart.data.datasets[3].data = [...historyData.vramDynamic];
+
+                    // Dynamically set max Y based on total VRAM
+                    vramChart.options.scales.y.max = Math.ceil(gpu.vram_total_gb);
+                    vramChart.update('none');
+                }
+            }
+        }
+
+        // Initialize charts when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            initVramChart();
+            initCpuRamChart();
+        });
+
         // Update viewer stats display
         function updateViewerStatsDisplay(stats) {
             viewerStats = stats;
@@ -836,6 +1157,11 @@
 
         socket.on('viewer_stats', (stats) => {
             updateViewerStatsDisplay(stats);
+        });
+
+        // Handle system stats updates
+        socket.on('system_stats', (stats) => {
+            updateSystemStats(stats);
         });
 
         // Load configuration
