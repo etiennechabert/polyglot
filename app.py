@@ -261,6 +261,7 @@ translation_model = None
 translation_tokenizer = None
 diarization_pipeline = None  # Speaker diarization pipeline
 summarization_pipe = None  # Local LLM for summarization
+summarization_paused = False  # Runtime toggle to pause/resume summarization (kill switch)
 audio_stream = None
 p_audio = None
 actual_sample_rate = 48000  # Will be set to the actual device sample rate
@@ -705,46 +706,30 @@ NEW DISCUSSION (since last summary - analyze this carefully):
             context_section = f"""MEETING TRANSCRIPT (first summary):
 {new_transcript}"""
 
-        # Build the prompt for structured summary (Phi-3 format)
-        prompt = f"""<|user|>
-You are a meeting summarizer helping someone who just joined catch up on the meeting.
-IMPORTANT: Never mention speakers (Speaker 1, Speaker 2, etc.) - focus ONLY on WHAT is being discussed.
-Output ONLY valid JSON, no other text before or after.
-
-The meeting has been going for {minutes_since_start} minutes. Time range: {time_range}
+        # Build the prompt for recent discussion summary only (Llama 3.2 format)
+        # Full meeting overview is now handled manually via Claude
+        prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You summarize recent meeting discussion. Output ONLY valid JSON. Never mention speaker names/numbers.<|eot_id|><|start_header_id|>user<|end_header_id|>
+Meeting: {minutes_since_start} min total. Time range: {time_range}
 
 {context_section}
 
----
-
-Provide a summary in this EXACT JSON format:
-{{
-  "recent_bullets": ["bullet point 1 about the NEW discussion", "bullet point 2", "...as many as needed"],
-  "overview_sections": [
-    {{"title": "Topic/Theme Name", "bullets": ["key point 1", "key point 2"]}},
-    {{"title": "Another Topic", "bullets": ["key point 1", "key point 2"]}}
-  ]
-}}
+Output JSON:
+{{"recent_details": ["detailed point 1", "detailed point 2", "detailed point 3", "detailed point 4"]}}
 
 Rules:
-- recent_bullets: Detailed bullet points about the NEW transcript section. Be specific.
-- overview_sections: COMBINE the previous summary topics with new information. Group the ENTIRE meeting into logical topics/themes. Update existing topics if new info relates to them, or add new sections for new topics.
-- Never mention speaker names or numbers
-- Focus on CONTENT - what decisions were made, what was discussed, what problems were raised
-<|end|>
-<|assistant|>
+- 4-6 DETAILED bullet points about the RECENT discussion only
+- Be specific: include names, numbers, key facts mentioned
+- Write full sentences, not brief phrases
+- Focus on what was just discussed, not the whole meeting<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 """
 
-        # Generate summary - allow more tokens for detailed output
-        # use_cache=False avoids DynamicCache compatibility issues with Phi-3
+        # Generate summary (reduced tokens since we only need bullets now)
         result = summarization_pipe(
             prompt,
-            max_new_tokens=1500,
-            do_sample=True,
-            temperature=0.5,
-            top_p=0.9,
+            max_new_tokens=400,
+            do_sample=False,
             return_full_text=False,
-            use_cache=False,
         )
 
         generated_text = result[0]["generated_text"].strip()
@@ -752,25 +737,61 @@ Rules:
 
         # Parse the JSON response
         import json
+        import re
         # Try to extract JSON from the response
         json_start = generated_text.find("{")
         json_end = generated_text.rfind("}") + 1
         if json_start >= 0 and json_end > json_start:
             json_str = generated_text[json_start:json_end]
-            summary_data = json.loads(json_str)
+
+            # Try to repair truncated JSON by closing brackets
+            try:
+                summary_data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Count open/close brackets and try to fix
+                open_brackets = json_str.count('[') - json_str.count(']')
+                open_braces = json_str.count('{') - json_str.count('}')
+
+                # Remove trailing incomplete strings (ends with unclosed quote)
+                if json_str.rstrip().endswith('"') or json_str.rstrip().endswith("'"):
+                    # Find last complete item
+                    json_str = re.sub(r',\s*"[^"]*$', '', json_str)
+                    json_str = re.sub(r',\s*\'[^\']*$', '', json_str)
+
+                # Close brackets
+                json_str = json_str.rstrip().rstrip(',')
+                json_str += ']' * open_brackets + '}' * open_braces
+
+                log(f"Repaired JSON (added {open_brackets} ] and {open_braces} }})", "SUMMARY")
+                summary_data = json.loads(json_str)
 
             with summary_lock:
-                # Update recent bullets (detailed view of last ~10 min)
-                current_summary["recent_bullets"] = summary_data.get("recent_bullets", [])
+                # Update recent details (detailed view of last ~5 min)
+                # Support both old field name (recent_bullets) and new (recent_details)
+                current_summary["recent_bullets"] = summary_data.get("recent_details", summary_data.get("recent_bullets", []))
 
-                # Update overview sections (full meeting grouped by topic)
-                current_summary["overview_sections"] = summary_data.get("overview_sections", [])
+                # Update timeline sections (chronological with time ranges)
+                # Support both old field name (overview_sections) and new (timeline)
+                timeline = summary_data.get("timeline", summary_data.get("overview_sections", []))
+                # Convert timeline format to overview_sections format for UI compatibility
+                current_summary["overview_sections"] = []
+                for item in timeline:
+                    if isinstance(item, dict):
+                        # New format: {title, content} -> convert to {title, bullets}
+                        if "content" in item:
+                            current_summary["overview_sections"].append({
+                                "title": item.get("title", ""),
+                                "content": item.get("content", "")  # Keep as content for paragraph display
+                            })
+                        else:
+                            # Old format: {title, bullets}
+                            current_summary["overview_sections"].append(item)
 
                 current_summary["last_updated"] = time.time()
                 current_summary["segments_summarized"] = len(all_meeting_segments)
                 current_summary["time_range"] = time_range
 
-            log(f"Generated: {len(current_summary['recent_bullets'])} bullets, {len(current_summary['overview_sections'])} sections", "SUMMARY")
+            log(f"Generated: {len(current_summary['recent_bullets'])} details, {len(current_summary['overview_sections'])} timeline sections", "SUMMARY")
             return current_summary
         else:
             log(f"Could not parse JSON from response: {generated_text[:300]}", "SUMMARY")
@@ -800,6 +821,9 @@ def check_and_generate_summary():
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
         return
 
+    if summarization_paused:
+        return  # Kill switch is active
+
     current_time = time.time()
 
     # Check if it's time for a summary
@@ -825,6 +849,10 @@ def run_pending_summary():
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
         summary_pending = False
         return
+
+    if summarization_paused:
+        summary_pending = False
+        return  # Kill switch is active
 
     if len(all_meeting_segments) == 0:
         summary_pending = False
@@ -913,16 +941,20 @@ def translate_summary(summary, target_lang, source_lang="en"):
             translated_bullet = translate_text(bullet, source_lang, target_lang)
             translated_summary["recent_bullets"].append(translated_bullet)
 
-        # Translate overview sections (title + bullets)
+        # Translate overview sections (title + content or bullets)
         for section in summary.get("overview_sections", []):
             translated_section = {
                 "title": translate_text(section.get("title", ""), source_lang, target_lang),
-                "bullets": []
             }
-            for bullet in section.get("bullets", []):
-                translated_section["bullets"].append(
-                    translate_text(bullet, source_lang, target_lang)
-                )
+            # Handle new paragraph format (content) or old bullet format
+            if "content" in section:
+                translated_section["content"] = translate_text(section.get("content", ""), source_lang, target_lang)
+            elif "bullets" in section:
+                translated_section["bullets"] = []
+                for bullet in section.get("bullets", []):
+                    translated_section["bullets"].append(
+                        translate_text(bullet, source_lang, target_lang)
+                    )
             translated_summary["overview_sections"].append(translated_section)
 
         return translated_summary
@@ -1994,6 +2026,10 @@ def handle_trigger_summary():
         emit('summary_error', {'message': 'Summarization is not enabled'})
         return
 
+    if summarization_paused:
+        emit('summary_error', {'message': 'Summarization is paused. Resume it first.'})
+        return
+
     if len(all_meeting_segments) == 0:
         emit('summary_error', {'message': 'No transcript content to summarize yet'})
         return
@@ -2068,6 +2104,78 @@ def handle_trigger_summary():
 
     summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
     summary_thread.start()
+
+
+@socketio.on("toggle_summarization")
+def handle_toggle_summarization():
+    """Toggle summarization on/off (admin only) - kill switch for performance issues"""
+    global summarization_paused
+
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        emit('summarization_status', {'enabled': False, 'reason': 'Summarization not configured'})
+        return
+
+    # Toggle the state
+    summarization_paused = not summarization_paused
+    status = "paused" if summarization_paused else "resumed"
+    print(f"[SUMMARY] Summarization {status} by admin")
+
+    # Emit to all admin clients
+    socketio.emit('summarization_status', {
+        'enabled': not summarization_paused,
+        'paused': summarization_paused
+    }, room='admin')
+
+
+@socketio.on("broadcast_manual_summary")
+def handle_broadcast_manual_summary(data):
+    """Broadcast a manually pasted summary (from Claude) to all viewers, translated to their language"""
+    global current_summary
+
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    summary_markdown = data.get('summary_markdown', '')
+    source_lang = data.get('source_lang', 'en')  # Default to English
+    if not summary_markdown:
+        emit('error', {'message': 'No summary provided'})
+        return
+
+    # Store original in current_summary for new viewers
+    with summary_lock:
+        current_summary["manual_overview"] = summary_markdown
+        current_summary["manual_overview_source_lang"] = source_lang
+        current_summary["last_updated"] = time.time()
+
+    log(f"Broadcasting manual summary ({len(summary_markdown)} chars) to viewers", "SUMMARY")
+
+    # Cache translations to avoid re-translating for same language
+    translations_cache = {source_lang: summary_markdown}
+
+    # Send to each viewer in their language
+    for sid, client in connected_clients.items():
+        if client.get('role') == 'viewer':
+            target_lang = client.get('language', source_lang)
+
+            # Get or create translation
+            if target_lang not in translations_cache:
+                log(f"Translating manual summary to {target_lang}", "SUMMARY")
+                translations_cache[target_lang] = translate_text(summary_markdown, source_lang, target_lang)
+
+            socketio.emit('manual_summary_update', {
+                'summary_markdown': translations_cache[target_lang],
+                'timestamp': time.time()
+            }, room=sid)
+
+    # Confirm to admin
+    emit('manual_summary_broadcast', {'success': True, 'languages_sent': list(translations_cache.keys())})
 
 
 if __name__ == "__main__":
