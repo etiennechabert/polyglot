@@ -16,6 +16,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+
+def log(message, tag=None):
+    """Print a log message with timestamp. Tag is optional prefix like [SUMMARY]"""
+    ts = datetime.now().strftime('%H:%M:%S')
+    if tag:
+        print(f"[{ts}] [{tag}] {message}")
+    else:
+        print(f"[{ts}] {message}")
+
+
 # Word list for generating memorable passphrases
 PASSPHRASE_WORDS = [
     "apple", "banana", "cherry", "dragon", "eagle", "forest", "garden", "harbor",
@@ -517,131 +527,112 @@ def initialize_models():
 
 
 # Model rotation state tracking
-models_offloaded = False
-summarization_active = False  # Track when summarization is actively running
-model_rotation_lock = threading.Lock()
+# When model rotation is enabled:
+# - Transcription models (Whisper, Translation, Diarization) stay on GPU permanently
+# - Summarization model starts on CPU, moves to GPU only during summary generation
+# - Transcription must wait while summarization model is on GPU to avoid VRAM overflow
+summarization_on_gpu = False  # True when summarization model is loaded on GPU
+model_rotation_lock = threading.Lock()  # Protects summarization_on_gpu state changes
+transcription_lock = threading.Lock()  # Ensures transcription completes before summarization starts
 
 
-def offload_models_to_cpu():
-    """Offload Whisper, Translation, and Diarization models to CPU and load Summarization to GPU.
+def load_summarization_to_gpu():
+    """Move Summarization model from CPU to GPU for inference.
 
-    This is called before summarization to:
-    1. Move transcription models (Whisper, Translation, Diarization) to CPU
-    2. Move summarization model to GPU for inference
+    Also moves translation model to CPU to free VRAM.
+    Called before generating a summary. Transcription must be paused while
+    summarization model is on GPU to avoid VRAM overflow.
     """
-    global transcription_pipe, translation_model, diarization_pipeline, summarization_pipe, models_offloaded, model_vram_usage
+    global summarization_pipe, summarization_on_gpu, model_vram_usage, translation_model
 
     if not Config.ENABLE_MODEL_ROTATION:
-        return False
+        return True  # Model already on GPU if rotation disabled
 
     with model_rotation_lock:
-        if models_offloaded:
-            return True  # Already offloaded
+        if summarization_on_gpu:
+            return True  # Already on GPU
 
-        print("[MODEL ROTATION] Swapping models for summarization...")
+        log("Swapping models for summarization...", "MODEL")
         start_time = time.time()
 
         try:
-            # Clear CUDA cache first to defragment memory before offloading
-            torch.cuda.empty_cache()
-            print("  - CUDA cache cleared (pre-swap)")
-
-            # Offload Whisper model to CPU
-            if transcription_pipe is not None:
-                transcription_pipe.model.to("cpu")
-                transcription_pipe.device = torch.device("cpu")
-                print("  - Whisper model moved to CPU")
-
-            # Offload Translation model to CPU
-            if translation_model is not None:
+            # First, move translation model to CPU to free VRAM
+            if translation_model is not None and Config.DEVICE == "cuda":
+                log("  Moving translation model to CPU...", "MODEL")
                 translation_model.to("cpu")
-                print("  - Translation model moved to CPU")
+                model_vram_usage["translation"] = 0
+                torch.cuda.empty_cache()
 
-            # NOTE: Diarization pipeline stays on GPU - it doesn't cleanly support device swapping
-            # and causes CUDA memory corruption errors when moved. This is a pyannote limitation.
-            # The ~1-2GB it uses is acceptable since Phi-3-mini only needs ~3GB.
-            if diarization_pipeline is not None:
-                print("  - Diarization pipeline stays on GPU (pyannote doesn't support device swap)")
+            vram_before = torch.cuda.memory_allocated(0) / 1024**3
 
-            # Clear CUDA cache to release memory from transcription models
-            torch.cuda.empty_cache()
-            print("  - CUDA cache cleared (post-offload)")
-
-            # Move Summarization model to GPU for inference
+            # Then load summarization to GPU
             if summarization_pipe is not None:
+                log("  Moving summarization model to GPU...", "MODEL")
                 summarization_pipe.model.to("cuda")
                 summarization_pipe.device = torch.device("cuda")
-                print("  - Summarization model moved to GPU")
+                torch.cuda.empty_cache()
 
-            models_offloaded = True
+            summarization_on_gpu = True
             elapsed = time.time() - start_time
             vram_after = torch.cuda.memory_allocated(0) / 1024**3
-            print(f"[MODEL ROTATION] Swap complete in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB (summarization on GPU)")
+            # Update VRAM tracking for the graph
+            model_vram_usage["summarization"] = vram_after - vram_before
+            log(f"Swap complete in {elapsed:.1f}s, VRAM: {vram_after:.2f} GB", "MODEL")
             return True
 
         except Exception as e:
-            print(f"[MODEL ROTATION] Error during model swap: {e}")
+            log(f"Error loading summarization to GPU: {e}", "MODEL")
             import traceback
             traceback.print_exc()
             return False
 
 
-def reload_models_to_gpu():
-    """Reload Whisper, Translation, and Diarization models back to GPU and move Summarization to CPU.
+def unload_summarization_to_cpu():
+    """Move Summarization model from GPU back to CPU after summary generation.
 
-    This is called after summarization completes to:
-    1. Move summarization model back to CPU
-    2. Move transcription models (Whisper, Translation, Diarization) back to GPU
+    Also restores translation model back to GPU.
+    Called after generating a summary. Frees GPU memory for transcription models.
     """
-    global transcription_pipe, translation_model, diarization_pipeline, summarization_pipe, models_offloaded, model_vram_usage
+    global summarization_pipe, summarization_on_gpu, model_vram_usage, translation_model
 
     if not Config.ENABLE_MODEL_ROTATION:
-        return False
+        return True  # Model stays on GPU if rotation disabled
 
     with model_rotation_lock:
-        if not models_offloaded:
-            return True  # Already on GPU
+        if not summarization_on_gpu:
+            return True  # Already on CPU
 
-        print("[MODEL ROTATION] Swapping models back for transcription...")
+        log("Restoring models after summarization...", "MODEL")
         start_time = time.time()
 
         try:
-            # Move Summarization model back to CPU first
+            # First, move summarization back to CPU
             if summarization_pipe is not None:
+                log("  Moving summarization model to CPU...", "MODEL")
                 summarization_pipe.model.to("cpu")
                 summarization_pipe.device = torch.device("cpu")
-                print("  - Summarization model moved to CPU")
 
-            # Clear CUDA cache to release memory from summarization model
+            # Clear CUDA cache to release memory
             torch.cuda.empty_cache()
-            print("  - CUDA cache cleared (post-summarization)")
+            model_vram_usage["summarization"] = 0
 
-            # Reload Whisper model to GPU
-            if transcription_pipe is not None:
-                transcription_pipe.model.to("cuda")
-                transcription_pipe.device = torch.device("cuda")
-                print("  - Whisper model moved to GPU")
-
-            # Reload Translation model to GPU
-            if translation_model is not None:
+            # Then restore translation model to GPU
+            if translation_model is not None and Config.DEVICE == "cuda":
+                log("  Moving translation model back to GPU...", "MODEL")
+                vram_before = torch.cuda.memory_allocated(0) / 1024**3
                 translation_model.to("cuda")
-                print("  - Translation model moved to GPU")
+                torch.cuda.empty_cache()
+                vram_after_translation = torch.cuda.memory_allocated(0) / 1024**3
+                model_vram_usage["translation"] = vram_after_translation - vram_before
 
-            # Diarization pipeline stays on GPU - no need to reload
-            if diarization_pipeline is not None:
-                print("  - Diarization pipeline already on GPU")
-
-            # Clear CUDA cache to clean up fragmentation
-            torch.cuda.empty_cache()
-
-            models_offloaded = False
+            summarization_on_gpu = False
             elapsed = time.time() - start_time
             vram_after = torch.cuda.memory_allocated(0) / 1024**3
-            print(f"[MODEL ROTATION] Swap complete in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB (transcription on GPU)")
+            log(f"Restore complete in {elapsed:.1f}s, VRAM: {vram_after:.2f} GB", "MODEL")
             return True
 
         except Exception as e:
-            print(f"[MODEL ROTATION] Error reloading models: {e}")
+            log(f"Error restoring models: {e}", "MODEL")
             import traceback
             traceback.print_exc()
             return False
@@ -649,14 +640,9 @@ def reload_models_to_gpu():
 
 def audio_callback(in_data, frame_count, time_info, status):
     """Callback for audio stream"""
-    if Config.DEBUG and status:
-        print(f"[DEBUG] audio_callback status: {status}")
-
     if is_listening and in_data:
         # Convert bytes to numpy array
         audio_data = np.frombuffer(in_data, dtype=np.int16).astype(np.float32) / 32768.0
-        if Config.DEBUG and len(audio_data) > 0:
-            level = np.abs(audio_data).mean()
         audio_queue.put(audio_data)
     return (in_data, pyaudio.paContinue)
 
@@ -685,18 +671,20 @@ def generate_summary(previous_overview, new_transcript, time_range="", minutes_s
         time_range: Time range of the full meeting
         minutes_since_start: How long the meeting has been going
     """
-    global current_summary, last_summary_time, all_meeting_segments, summarization_active
+    global current_summary, last_summary_time, all_meeting_segments
 
     if summarization_pipe is None:
         return None
 
-    # Model rotation: offload other models to CPU to free VRAM
+    # Model rotation: Wait for any in-progress transcription to finish, then load summarization to GPU
     rotation_enabled = Config.ENABLE_MODEL_ROTATION
     if rotation_enabled:
-        offload_models_to_cpu()
-
-    # Mark summarization as active
-    summarization_active = True
+        # Acquire transcription lock to ensure no transcription is running
+        # This blocks until any in-progress transcription completes
+        log("Waiting for transcription lock...", "SUMMARY")
+        transcription_lock.acquire()
+        log("Transcription lock acquired, loading summarization to GPU...", "SUMMARY")
+        load_summarization_to_gpu()
 
     try:
         # Build context section based on whether we have previous overview
@@ -756,7 +744,7 @@ Rules:
         )
 
         generated_text = result[0]["generated_text"].strip()
-        print(f"[SUMMARY] Raw LLM output: {generated_text[:500]}...")
+        log(f"Raw LLM output: {generated_text[:300]}...", "SUMMARY")
 
         # Parse the JSON response
         import json
@@ -778,24 +766,24 @@ Rules:
                 current_summary["segments_summarized"] = len(all_meeting_segments)
                 current_summary["time_range"] = time_range
 
-            print(f"[SUMMARY] Generated summary: {len(current_summary['recent_bullets'])} recent bullets, {len(current_summary['overview_sections'])} overview sections")
+            log(f"Generated: {len(current_summary['recent_bullets'])} bullets, {len(current_summary['overview_sections'])} sections", "SUMMARY")
             return current_summary
         else:
-            print(f"[SUMMARY] Could not parse JSON from response: {generated_text[:500]}")
+            log(f"Could not parse JSON from response: {generated_text[:300]}", "SUMMARY")
             return None
 
     except Exception as e:
-        print(f"[SUMMARY] Error generating summary: {e}")
+        log(f"Error generating summary: {e}", "SUMMARY")
         import traceback
         traceback.print_exc()
         return None
 
     finally:
-        # Mark summarization as no longer active
-        summarization_active = False
-        # Model rotation: reload models back to GPU
+        # Model rotation: unload summarization to CPU and release transcription lock
         if rotation_enabled:
-            reload_models_to_gpu()
+            unload_summarization_to_cpu()
+            transcription_lock.release()
+            log("Transcription lock released", "SUMMARY")
 
 
 def check_and_generate_summary():
@@ -813,7 +801,7 @@ def check_and_generate_summary():
             and not summary_pending):
         # Mark summary as pending - it will run after current transcription completes
         summary_pending = True
-        print(f"[SUMMARY] Summary scheduled - will generate after current processing completes")
+        log("Summary scheduled - will generate after current processing completes", "SUMMARY")
 
 
 def run_pending_summary():
@@ -861,9 +849,8 @@ def run_pending_summary():
 
     # Only summarize if we have new content
     if len(new_transcript_text) > 50 or (len(all_meeting_segments) > 0 and last_summary_segment_count == 0):
-        print(f"[SUMMARY] Generating summary: {len(all_meeting_segments)} total segments, {len(new_segments)} new since last summary")
-        print(f"[SUMMARY] Previous overview: {len(previous_overview_text)} chars, New transcript: {len(new_transcript_text)} chars")
-        print(f"[SUMMARY] {minutes_since_start}min into meeting, time range: {time_range}")
+        log(f"Generating: {len(all_meeting_segments)} total segments, {len(new_segments)} new", "SUMMARY")
+        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars new, {minutes_since_start}min in", "SUMMARY")
 
         # Generate in background thread to not block
         def generate_and_emit():
@@ -1029,43 +1016,24 @@ def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation with speaker diarization"""
     global is_processing, all_meeting_segments
 
+    # Acquire transcription lock - this ensures we don't run while summarization is on GPU
+    # If summarization is waiting for the lock, we'll wait here until it's done
+    if Config.ENABLE_MODEL_ROTATION:
+        if summarization_on_gpu:
+            log("Waiting for summarization to complete...", "TRANSCRIBE")
+        transcription_lock.acquire()
+
     try:
+        # Timestamp for logging and transcript file
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # Wait if models are offloaded during model rotation
-        # Audio continues to be captured while we wait
-        if Config.ENABLE_MODEL_ROTATION and models_offloaded:
-            print(f"[{timestamp}] Waiting for model rotation to complete...")
-            wait_start = time.time()
-            while models_offloaded:
-                time.sleep(0.1)  # Check every 100ms
-                if time.time() - wait_start > 60:  # Timeout after 60s
-                    print(f"[{timestamp}] Model rotation timeout - skipping this audio chunk")
-                    return
-            print(f"[{timestamp}] Models ready, resuming transcription (waited {time.time() - wait_start:.1f}s)")
-
-        if Config.DEBUG:
-            print(f"\n[DEBUG] {timestamp} transcribe_and_translate called")
-            print(f"[DEBUG] Audio data shape: {audio_data.shape}")
-            print(f"[DEBUG] Audio duration: {audio_duration:.2f}s")
-            print(f"[DEBUG] Audio min: {audio_data.min():.4f}, max: {audio_data.max():.4f}, mean: {audio_data.mean():.4f}")
-            if Config.DEVICE == "cuda":
-                print(f"[GPU MEMORY] Start: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
         # Perform speaker diarization first (if enabled)
         speaker_segments = None
         if Config.ENABLE_DIARIZATION:
-            print(f"[{timestamp}] Performing speaker diarization...")
+            log("Performing speaker diarization...", "DIARIZE")
             speaker_segments = perform_speaker_diarization(audio_data, SAMPLE_RATE)
-        else:
-            print(f"[{timestamp}] Speaker diarization disabled - skipping")
-
-        if Config.DEBUG:
-            print(f"[DEBUG] Speaker segments: {speaker_segments}")
 
         # Transcribe with timestamps
-        if Config.DEBUG:
-            print(f"[DEBUG] Starting Whisper transcription...")
         result = transcription_pipe(audio_data)
 
         # Extract full transcript and chunks IMMEDIATELY to avoid keeping reference to result
@@ -1090,11 +1058,6 @@ def transcribe_and_translate(audio_data, audio_duration):
         # Clear CUDA cache to release unused memory
         if Config.DEVICE == "cuda":
             torch.cuda.empty_cache()
-
-        if Config.DEBUG:
-            print(f"[DEBUG] Transcription complete: {len(full_transcript)} chars, {len(chunks)} chunks")
-            if Config.DEVICE == "cuda":
-                print(f"[GPU MEMORY] After Whisper: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
         if not full_transcript:
             is_processing = False
@@ -1140,7 +1103,6 @@ def transcribe_and_translate(audio_data, audio_duration):
                     speaker_mapping[original_id] = f"SPEAKER_{speaker_counter:02d}"
                     speaker_counter += 1
 
-            print(f"[DEBUG] Speaker mapping: {speaker_mapping}")
 
             # Extract all words with timestamps from chunks
             all_words = []
@@ -1158,8 +1120,6 @@ def transcribe_and_translate(audio_data, audio_duration):
                             "end": word_end
                         })
 
-            if Config.DEBUG:
-                print(f"[DEBUG] Extracted {len(all_words)} words from Whisper")
 
             # Assign each word to a speaker segment based on overlap
             words_with_speakers = []
@@ -1405,6 +1365,9 @@ def transcribe_and_translate(audio_data, audio_duration):
         traceback.print_exc()
     finally:
         is_processing = False
+        # Release transcription lock if model rotation is enabled
+        if Config.ENABLE_MODEL_ROTATION:
+            transcription_lock.release()
         # Now that transcription + translation is complete, run any pending summary
         # This ensures model rotation doesn't interrupt active transcription
         run_pending_summary()
@@ -1521,18 +1484,11 @@ def process_audio():
             should_process = silence_detected or max_length_reached
 
             if should_process:
-                if Config.DEBUG:
-                    print(f"[DEBUG] Processing trigger - silence_detected: {silence_detected}, max_length: {max_length_reached}")
-                    print(f"[DEBUG] Buffer size: {len(buffer)} chunks, silence_counter: {silence_counter}")
-
                 is_processing = True  # Set lock
 
                 audio_data = np.concatenate(buffer, axis=0)
                 buffer = []
                 silence_counter = 0
-
-                if Config.DEBUG:
-                    print(f"[DEBUG] Concatenated audio shape: {audio_data.shape}")
 
                 # Clear the queue BEFORE processing to avoid duplicate audio
                 while not audio_queue.empty():
@@ -1552,22 +1508,14 @@ def process_audio():
                 else:
                     audio_mono = audio_float
 
-                if Config.DEBUG:
-                    print(f"[DEBUG] Mono audio shape: {audio_mono.shape}, channels: {num_channels}")
-
                 # Resample from actual_sample_rate to 16000Hz for Whisper
                 if actual_sample_rate != SAMPLE_RATE:
                     audio_resampled = resampy.resample(audio_mono, actual_sample_rate, SAMPLE_RATE)
-                    if Config.DEBUG:
-                        print(f"[DEBUG] Resampled {actual_sample_rate}Hz -> {SAMPLE_RATE}Hz: {audio_resampled.shape}")
                 else:
                     audio_resampled = audio_mono
 
                 # Check average audio level to detect if it's mostly silence
                 avg_audio_level = np.abs(audio_resampled).mean()
-
-                if Config.DEBUG:
-                    print(f"[DEBUG] Average audio level: {avg_audio_level:.4f}, threshold: {Config.MIN_AUDIO_LEVEL}")
 
                 # Skip transcription if audio is too quiet (likely silence/hallucination)
                 if avg_audio_level < Config.MIN_AUDIO_LEVEL:
@@ -1725,9 +1673,8 @@ def get_system_stats():
                 "summarization": Config.SUMMARIZATION_MODEL if Config.ENABLE_SUMMARIZATION else "disabled",
             },
             # Model rotation status
-            "models_offloaded": models_offloaded,
+            "summarization_on_gpu": summarization_on_gpu,
             "model_rotation_enabled": Config.ENABLE_MODEL_ROTATION,
-            "summarization_active": summarization_active,
         }
     else:
         stats["gpu"] = None
@@ -1785,7 +1732,6 @@ def download_transcript():
 @socketio.on("connect")
 def handle_connect():
     """Handle client connection"""
-    print(f"[DEBUG] Client connected to SocketIO! SID: {request.sid}")
     # Initialize client session
     connected_clients[request.sid] = {
         'role': None,
@@ -1797,7 +1743,6 @@ def handle_connect():
 @socketio.on("disconnect")
 def handle_disconnect():
     """Handle client disconnection"""
-    print(f"[DEBUG] Client disconnected from SocketIO! SID: {request.sid}")
 
     # Clean up client session
     if request.sid in connected_clients:
@@ -1983,7 +1928,6 @@ def handle_start_listening():
         emit('error', {'message': 'Unauthorized. Admin access required.'})
         return
 
-    print("[DEBUG] handle_start_listening called by admin!")
     start_listening_internal()
 
 
