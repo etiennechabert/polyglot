@@ -51,7 +51,7 @@ class Config:
     #   - "microsoft/Phi-3-mini-128k-instruct" (3.8B, ~7GB VRAM, 128K context)
     #   - "microsoft/Phi-3-medium-128k-instruct" (14B, ~8GB VRAM, 128K context, SLOW but high quality)
     #   - "Qwen/Qwen2.5-7B-Instruct" (7B, ~14GB VRAM, 128K context, SLOW but excellent quality)
-    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "microsoft/Phi-3.5-mini-instruct")
+    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "meta-llama/Llama-3.2-3B-Instruct")
 
     # Summarization model context size (in tokens)
     # This should match your chosen model's context window
