@@ -764,7 +764,10 @@
             <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%; background: rgba(236, 72, 153, 0.05); border: 1px solid rgba(236, 72, 153, 0.2);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
                     <h2 style="margin: 0; color: #ec4899;">📋 Live Summary</h2>
-                    <button id="triggerSummaryBtn" onclick="triggerManualSummary()" style="padding: 8px 16px; font-size: 12px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); border: none; color: white; cursor: pointer; border-radius: 8px; font-weight: 600; box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);">Generate Now</button>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button id="toggleSummarizationBtn" onclick="toggleSummarization()" style="padding: 8px 12px; font-size: 11px; background: rgba(34, 197, 94, 0.2); border: 1px solid #22c55e; color: #22c55e; cursor: pointer; border-radius: 8px; font-weight: 600; transition: all 0.2s;">● Active</button>
+                        <button id="triggerSummaryBtn" onclick="triggerManualSummary()" style="padding: 8px 16px; font-size: 12px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); border: none; color: white; cursor: pointer; border-radius: 8px; font-weight: 600; box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);">Generate Now</button>
+                    </div>
                 </div>
                 <div id="summaryContent" style="flex: 1; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column;">
                     <div id="summaryStatus" style="color: #9ca3af; text-align: center; padding: 40px 20px;">
@@ -782,14 +785,33 @@
                                 <li style="color: #6b7280;">Waiting for content...</li>
                             </ul>
                         </div>
-                        <!-- Meeting Overview Section (Bottom - Full meeting grouped by topic) -->
+                        <!-- Manual Summary Input (Bottom - paste Claude summary here) -->
                         <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
-                            <div style="color: #ec4899; font-weight: 600; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 6px;">
-                                <span style="font-size: 14px;">📑</span> Full Meeting Overview
+                            <div style="color: #ec4899; font-weight: 600; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; justify-content: space-between;">
+                                <span style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 14px;">📝</span> Meeting Summary (Paste from Claude)
+                                </span>
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <select id="summarySourceLang" style="padding: 3px 6px; font-size: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: white;">
+                                        <option value="en">EN</option>
+                                        <option value="fr">FR</option>
+                                        <option value="es">ES</option>
+                                        <option value="de">DE</option>
+                                        <option value="sv">SV</option>
+                                    </select>
+                                    <button onclick="broadcastManualSummary()" style="padding: 4px 10px; font-size: 10px; background: linear-gradient(135deg, #ec4899, #be185d); border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 600;">Broadcast</button>
+                                </div>
                             </div>
-                            <div id="overviewSections" style="flex: 1; overflow-y: auto; background: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 10px;">
-                                <div style="color: #6b7280; text-align: center; padding: 20px; font-size: 12px;">No topics yet...</div>
-                            </div>
+                            <textarea id="manualSummaryInput" placeholder="Paste your Claude-generated meeting summary here in markdown format...
+
+Example:
+## Main Topics
+- Topic 1: Description
+- Topic 2: Description
+
+**Key Points:**
+- Important point 1
+- Important point 2" style="flex: 1; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(236, 72, 153, 0.3); border-radius: 8px; padding: 10px; color: white; font-family: monospace; font-size: 12px; resize: none; line-height: 1.5;"></textarea>
                         </div>
                         <div style="margin-top: 12px; font-size: 11px; color: #6b7280; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between;">
                             <span>Time range: <span id="summaryTimeRange" style="color: #ec4899;">--</span></span>
@@ -1382,6 +1404,66 @@
             socket.emit('trigger_summary');
         }
 
+        // Broadcast manual summary (pasted from Claude)
+        function broadcastManualSummary() {
+            const summaryText = document.getElementById('manualSummaryInput').value.trim();
+            const sourceLang = document.getElementById('summarySourceLang').value;
+            if (!summaryText) {
+                alert('Please paste a summary first');
+                return;
+            }
+            socket.emit('broadcast_manual_summary', {
+                summary_markdown: summaryText,
+                source_lang: sourceLang
+            });
+        }
+
+        // Handle confirmation of manual summary broadcast
+        socket.on('manual_summary_broadcast', (data) => {
+            if (data.success) {
+                // Flash the button green briefly
+                const btn = document.querySelector('button[onclick="broadcastManualSummary()"]');
+                btn.style.background = '#22c55e';
+                btn.textContent = 'Sent!';
+                setTimeout(() => {
+                    btn.style.background = 'linear-gradient(135deg, #ec4899, #be185d)';
+                    btn.textContent = 'Broadcast';
+                }, 2000);
+            }
+        });
+
+        // Toggle summarization on/off (kill switch)
+        let summarizationActive = true;
+        function toggleSummarization() {
+            socket.emit('toggle_summarization');
+        }
+
+        // Handle summarization status updates
+        socket.on('summarization_status', (data) => {
+            summarizationActive = data.enabled;
+            updateSummarizationButton();
+        });
+
+        function updateSummarizationButton() {
+            const btn = document.getElementById('toggleSummarizationBtn');
+            const genBtn = document.getElementById('triggerSummaryBtn');
+            if (summarizationActive) {
+                btn.innerHTML = '● Active';
+                btn.style.background = 'rgba(34, 197, 94, 0.2)';
+                btn.style.borderColor = '#22c55e';
+                btn.style.color = '#22c55e';
+                genBtn.disabled = false;
+                genBtn.style.opacity = '1';
+            } else {
+                btn.innerHTML = '○ Paused';
+                btn.style.background = 'rgba(239, 68, 68, 0.2)';
+                btn.style.borderColor = '#ef4444';
+                btn.style.color = '#ef4444';
+                genBtn.disabled = true;
+                genBtn.style.opacity = '0.5';
+            }
+        }
+
         // Update summary display
         function updateSummaryDisplay(summary) {
             const btn = document.getElementById('triggerSummaryBtn');
@@ -1423,16 +1505,25 @@
                     titleDiv.textContent = section.title || 'Topic';
                     sectionDiv.appendChild(titleDiv);
 
-                    // Section bullets
-                    const bulletsList = document.createElement('ul');
-                    bulletsList.style.cssText = 'margin: 0; padding-left: 20px; list-style-type: disc;';
-                    (section.bullets || []).forEach(bullet => {
-                        const li = document.createElement('li');
-                        li.style.cssText = 'margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.4;';
-                        li.textContent = bullet;
-                        bulletsList.appendChild(li);
-                    });
-                    sectionDiv.appendChild(bulletsList);
+                    // Section content - support both new paragraph format and old bullets format
+                    if (section.content) {
+                        // New format: paragraph content
+                        const contentDiv = document.createElement('div');
+                        contentDiv.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.5; padding-left: 8px;';
+                        contentDiv.textContent = section.content;
+                        sectionDiv.appendChild(contentDiv);
+                    } else if (section.bullets && section.bullets.length > 0) {
+                        // Old format: bullet list
+                        const bulletsList = document.createElement('ul');
+                        bulletsList.style.cssText = 'margin: 0; padding-left: 20px; list-style-type: disc;';
+                        section.bullets.forEach(bullet => {
+                            const li = document.createElement('li');
+                            li.style.cssText = 'margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.4;';
+                            li.textContent = bullet;
+                            bulletsList.appendChild(li);
+                        });
+                        sectionDiv.appendChild(bulletsList);
+                    }
 
                     overviewEl.appendChild(sectionDiv);
                 });
