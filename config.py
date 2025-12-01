@@ -27,8 +27,10 @@ class Config:
     VIEWER_PASSWORD = None  # Set at runtime by generate_viewer_password()
 
     # Summarization settings
+    # Set to False to disable live summary feature
     ENABLE_SUMMARIZATION = os.getenv("ENABLE_SUMMARIZATION", "True").lower() in ("true", "1", "yes")
-    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "60"))  # Generate summary once per minute
+    # Generate summary once per minute
+    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "60"))
 
     # Model rotation for summarization (experimental)
     # When enabled, offloads Whisper/Translation/Diarization models to CPU before running summarization
@@ -36,18 +38,29 @@ class Config:
     # Audio recording continues during rotation - transcription is queued and processed after reload
     # WARNING: This adds latency (~10-20s) during model swap
     # Set to True if you have limited VRAM and want to use larger summarization models
-    ENABLE_MODEL_ROTATION = True
+    ENABLE_MODEL_ROTATION = os.getenv("ENABLE_MODEL_ROTATION", "True").lower() in ("true", "1", "yes")
 
     # Local summarization model
-    # Options:
-    #   - "Qwen/Qwen2-7B-Instruct" (7B, ~5GB VRAM, excellent quality) - RECOMMENDED
-    #   - "Qwen/Qwen2.5-3B-Instruct" (3B, ~2.5GB VRAM, good quality)
-    #   - "Qwen/Qwen2-1.5B-Instruct" (1.5B, ~1.5GB VRAM, very fast, decent quality)
-    #   - "microsoft/Phi-3-mini-4k-instruct" (3.8B, ~3GB VRAM, good quality)
-    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "Qwen/Qwen2-7B-Instruct")
+    # Options (sorted by speed, all with 128K context):
+    #   - "microsoft/Phi-3-mini-128k-instruct" (3.8B, ~3GB VRAM, 128K context, FAST) - RECOMMENDED for Windows
+    #   - "microsoft/Phi-3-small-128k-instruct" (7B, ~5GB VRAM, 128K context) - Linux only (requires Triton)
+    #   - "meta-llama/Llama-3.2-3B-Instruct" (3B, ~2.5GB VRAM, 128K context, FAST)
+    #   - "microsoft/Phi-3-medium-128k-instruct" (14B, ~8GB VRAM, 128K context, SLOW but high quality)
+    #   - "Qwen/Qwen2.5-7B-Instruct" (7B, ~14GB VRAM, 128K context, SLOW but excellent quality)
+    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "microsoft/Phi-3-mini-128k-instruct")
+
+    # Summarization model context size (in tokens)
+    # This should match your chosen model's context window
+    # Used to calculate how much transcript we can fit in the prompt
+    # Common values:
+    #   - 128000 for Phi-3-medium-128k, Qwen2.5-7B
+    #   - 32000 for Mistral-7B-Instruct-v0.3
+    #   - 4096 for smaller models
+    # Rule of thumb: 1 token ≈ 4 characters, so 128K tokens ≈ 500K characters
+    SUMMARIZATION_CONTEXT_SIZE = int(os.getenv("SUMMARIZATION_CONTEXT_SIZE", "128000"))
 
     # Debug mode - enables detailed logging
-    DEBUG = True
+    DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
 
     # Speaker diarization toggle
     # Set to False to disable speaker identification (improves performance)
@@ -67,7 +80,7 @@ class Config:
     # medium: ~5GB VRAM, good accuracy, multilingual, FASTER (~5-8s per audio chunk)
     # base: ~1GB VRAM, decent accuracy, multilingual, FASTEST (~2-3s per audio chunk)
     # NOTE: distil-large-v3 is English-only! Use medium/large-v3/turbo for French/multilingual
-    WHISPER_MODEL = "turbo"
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "turbo")
 
     # Whisper chunk length for processing long audio (in seconds)
     # Whisper splits audio longer than this into overlapping chunks
@@ -109,7 +122,7 @@ class Config:
     # Options:
     #   - "facebook/m2m100_418M" (smaller, faster, ~2GB VRAM, ~1-2s per segment)
     #   - "facebook/m2m100_1.2B" (larger, better quality, ~5GB VRAM, ~3-5s per segment)
-    TRANSLATION_MODEL = "facebook/m2m100_1.2B"
+    TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "facebook/m2m100_1.2B")
 
     # Target languages for translation
     # Each entry is a dict with "code" (ISO 639-1) and "name"
