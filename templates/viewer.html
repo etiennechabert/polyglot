@@ -343,6 +343,96 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
+        /* New message highlight animation - 5s fade from highlight to normal */
+        @keyframes highlightFade {
+            0% {
+                background: rgba(102, 126, 234, 0.4);
+                border-left-color: #667eea;
+                box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
+            }
+            20% {
+                background: rgba(102, 126, 234, 0.32);
+                box-shadow: 0 0 12px rgba(102, 126, 234, 0.24);
+            }
+            40% {
+                background: rgba(102, 126, 234, 0.24);
+                box-shadow: 0 0 9px rgba(102, 126, 234, 0.18);
+            }
+            60% {
+                background: rgba(102, 126, 234, 0.16);
+                box-shadow: 0 0 6px rgba(102, 126, 234, 0.12);
+            }
+            80% {
+                background: rgba(102, 126, 234, 0.08);
+                box-shadow: 0 0 3px rgba(102, 126, 234, 0.06);
+            }
+            100% {
+                background: rgba(255, 255, 255, 0.05);
+                border-left-color: rgba(102, 126, 234, 0.6);
+                box-shadow: none;
+            }
+        }
+
+        .translation-item.new-message {
+            animation: slideIn 0.3s ease, highlightFade 5s ease-out 0.3s forwards;
+        }
+
+        /* Summary section flash animation */
+        @keyframes summaryFlash {
+            0% {
+                box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.7);
+                background: rgba(102, 126, 234, 0.3);
+            }
+            25% {
+                box-shadow: 0 0 20px 5px rgba(102, 126, 234, 0.5);
+                background: rgba(102, 126, 234, 0.2);
+            }
+            50% {
+                box-shadow: 0 0 10px 2px rgba(102, 126, 234, 0.3);
+                background: rgba(102, 126, 234, 0.15);
+            }
+            75% {
+                box-shadow: 0 0 5px 1px rgba(102, 126, 234, 0.15);
+                background: rgba(102, 126, 234, 0.08);
+            }
+            100% {
+                box-shadow: none;
+                background: transparent;
+            }
+        }
+
+        .summary-section.flash-update {
+            animation: summaryFlash 1.5s ease-out forwards;
+        }
+
+        /* Meeting timeline flash (slightly different color) */
+        @keyframes timelineFlash {
+            0% {
+                box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.7);
+                background: rgba(236, 72, 153, 0.25);
+            }
+            25% {
+                box-shadow: 0 0 20px 5px rgba(236, 72, 153, 0.5);
+                background: rgba(236, 72, 153, 0.18);
+            }
+            50% {
+                box-shadow: 0 0 10px 2px rgba(236, 72, 153, 0.3);
+                background: rgba(236, 72, 153, 0.12);
+            }
+            75% {
+                box-shadow: 0 0 5px 1px rgba(236, 72, 153, 0.15);
+                background: rgba(236, 72, 153, 0.06);
+            }
+            100% {
+                box-shadow: none;
+                background: transparent;
+            }
+        }
+
+        .summary-section.flash-timeline {
+            animation: timelineFlash 1.5s ease-out forwards;
+        }
+
         .translation-item .time {
             font-size: 11px;
             color: rgba(255, 255, 255, 0.4);
@@ -552,22 +642,22 @@
                 <div id="summaryUpdated" class="summary-updated"></div>
             </div>
 
-            <!-- Recent Discussion Section (Top - Bullet points) -->
+            <!-- Recent Discussion Section (Top - Detailed last 5 min) -->
             <div class="summary-section">
                 <div class="summary-section-title">
                     <span class="icon">🔍</span>
-                    Recent Discussion
+                    Last 10 Minutes (Detailed)
                 </div>
                 <ul id="recentBulletsContent" style="background: rgba(102, 126, 234, 0.1); border-left: 3px solid #667eea; padding: 12px 14px 12px 30px; border-radius: 8px; line-height: 1.6; font-size: 13px; margin: 0; list-style-type: disc;">
                     <li style="color: rgba(255, 255, 255, 0.5);">Waiting for content...</li>
                 </ul>
             </div>
 
-            <!-- Meeting Overview Section (Bottom - Full meeting by topic) -->
+            <!-- Meeting Timeline Section (Bottom - Chronological with time ranges) -->
             <div class="summary-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
                 <div class="summary-section-title">
                     <span class="icon">📑</span>
-                    Meeting Overview
+                    Meeting Timeline
                 </div>
                 <div id="overviewSectionsContent" style="flex: 1; overflow-y: auto; background: rgba(0, 0, 0, 0.15); border-radius: 8px; padding: 10px;">
                     <div class="no-data" style="padding: 20px 0; font-size: 13px;">No topics yet...</div>
@@ -727,16 +817,19 @@
         const MAX_TRANSLATIONS = 50;
         let displayedTranslations = [];
 
-        function renderTranslations() {
+        function renderTranslations(newCount = 0) {
             if (!selectedLanguage || displayedTranslations.length === 0) return;
 
             const container = document.getElementById('translationsContainer');
             const fragment = document.createDocumentFragment();
 
             // Render in reverse order (newest first at top)
-            [...displayedTranslations].reverse().forEach(item => {
+            const reversed = [...displayedTranslations].reverse();
+            reversed.forEach((item, index) => {
                 const itemDiv = document.createElement('div');
-                itemDiv.className = 'translation-item';
+                // Apply new-message class to the newest items (at the start after reverse)
+                const isNew = index < newCount;
+                itemDiv.className = isNew ? 'translation-item new-message' : 'translation-item';
 
                 const timeDiv = document.createElement('div');
                 timeDiv.className = 'time';
@@ -760,6 +853,22 @@
             container.appendChild(fragment);
             // Scroll to top to show newest content
             container.scrollTop = 0;
+        }
+
+        // Helper to trigger flash animation on a section
+        function flashSection(elementId, flashClass) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const section = el.closest('.summary-section');
+            if (section) {
+                // Remove any existing animation class
+                section.classList.remove('flash-update', 'flash-timeline');
+                // Force reflow to restart animation
+                void section.offsetWidth;
+                section.classList.add(flashClass);
+                // Remove class after animation completes
+                setTimeout(() => section.classList.remove(flashClass), 1500);
+            }
         }
 
         // Lag timer tracking
@@ -788,7 +897,8 @@
                 // Reset lag timer on new translation
                 resetViewerLagTimer();
 
-                data.translated_segments[selectedLanguage].forEach(segment => {
+                const newSegments = data.translated_segments[selectedLanguage];
+                newSegments.forEach(segment => {
                     displayedTranslations.push({
                         text: segment.text,
                         timestamp: Date.now()
@@ -800,7 +910,8 @@
                     displayedTranslations = displayedTranslations.slice(-MAX_TRANSLATIONS);
                 }
 
-                renderTranslations();
+                // Pass the count of new messages for highlighting
+                renderTranslations(newSegments.length);
             }
         });
 
@@ -813,9 +924,11 @@
                 recentBulletsEl.innerHTML = recentBullets.map(bullet =>
                     `<li style="margin-bottom: 6px; color: rgba(255, 255, 255, 0.9);">${bullet}</li>`
                 ).join('');
+                // Flash the "Last 10 Minutes" section
+                flashSection('recentBulletsContent', 'flash-update');
             }
 
-            // Update overview sections (full meeting grouped by topic)
+            // Update timeline sections (chronological with time ranges)
             const overviewEl = document.getElementById('overviewSectionsContent');
             const sections = data.overview_sections || [];
             if (sections.length > 0) {
@@ -828,30 +941,71 @@
                         sectionDiv.style.marginBottom = '0';
                     }
 
-                    // Section title
+                    // Section title (with time range)
                     const titleDiv = document.createElement('div');
                     titleDiv.style.cssText = 'font-weight: 600; color: #667eea; margin-bottom: 8px; font-size: 13px;';
                     titleDiv.textContent = section.title || 'Topic';
                     sectionDiv.appendChild(titleDiv);
 
-                    // Section bullets
-                    const bulletsList = document.createElement('ul');
-                    bulletsList.style.cssText = 'margin: 0; padding-left: 20px; list-style-type: disc;';
-                    (section.bullets || []).forEach(bullet => {
-                        const li = document.createElement('li');
-                        li.style.cssText = 'margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.4;';
-                        li.textContent = bullet;
-                        bulletsList.appendChild(li);
-                    });
-                    sectionDiv.appendChild(bulletsList);
+                    // Section content - paragraph or bullets depending on format
+                    if (section.content) {
+                        // New format: paragraph content
+                        const contentDiv = document.createElement('div');
+                        contentDiv.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.5; padding-left: 8px;';
+                        contentDiv.textContent = section.content;
+                        sectionDiv.appendChild(contentDiv);
+                    } else if (section.bullets) {
+                        // Old format: bullet list
+                        const bulletsList = document.createElement('ul');
+                        bulletsList.style.cssText = 'margin: 0; padding-left: 20px; list-style-type: disc;';
+                        section.bullets.forEach(bullet => {
+                            const li = document.createElement('li');
+                            li.style.cssText = 'margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.4;';
+                            li.textContent = bullet;
+                            bulletsList.appendChild(li);
+                        });
+                        sectionDiv.appendChild(bulletsList);
+                    }
 
                     overviewEl.appendChild(sectionDiv);
                 });
+                // Flash the "Meeting Timeline" section
+                flashSection('overviewSectionsContent', 'flash-timeline');
             }
 
             // Update timestamp
             if (data.last_updated) {
                 const updateTime = new Date(data.last_updated * 1000);
+                document.getElementById('summaryUpdated').textContent = 'Updated ' + updateTime.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+            }
+        });
+
+        // Manual summary from admin (Claude-generated markdown)
+        socket.on('manual_summary_update', (data) => {
+            const overviewEl = document.getElementById('overviewSectionsContent');
+            const markdown = data.summary_markdown || '';
+
+            if (markdown) {
+                // Simple markdown to HTML conversion
+                let html = markdown
+                    .replace(/^## (.+)$/gm, '<h2 style="color: #667eea; margin: 12px 0 8px 0; font-size: 14px; font-weight: 600;">$1</h2>')
+                    .replace(/^### (.+)$/gm, '<h3 style="color: #ec4899; margin: 10px 0 6px 0; font-size: 13px; font-weight: 600;">$1</h3>')
+                    .replace(/\*\*(.+?)\*\*/g, '<strong style="color: #fbbf24;">$1</strong>')
+                    .replace(/^- (.+)$/gm, '<li style="margin: 4px 0 4px 20px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.5;">$1</li>')
+                    .replace(/\n\n/g, '<br><br>')
+                    .replace(/\n/g, '<br>');
+
+                overviewEl.innerHTML = `<div style="line-height: 1.6; font-size: 12px; color: rgba(255, 255, 255, 0.9);">${html}</div>`;
+
+                // Flash the "Meeting Timeline" section for manual broadcast
+                flashSection('overviewSectionsContent', 'flash-timeline');
+
+                // Update timestamp
+                const updateTime = new Date(data.timestamp * 1000);
                 document.getElementById('summaryUpdated').textContent = 'Updated ' + updateTime.toLocaleTimeString('en-US', {
                     hour: '2-digit',
                     minute: '2-digit',
