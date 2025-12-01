@@ -89,6 +89,13 @@ class Config:
     # Default is typically 0.7, try 0.5-0.6 for more speaker separation
     DIARIZATION_CLUSTERING_THRESHOLD = 0.5
 
+    # Embedding batch size for speaker diarization
+    # Controls how many audio segments are processed simultaneously for speaker embeddings
+    # DECREASE to reduce VRAM spikes (default pyannote is 32, which can cause 14GB+ usage)
+    # INCREASE for faster processing if you have VRAM headroom
+    # Recommended: 8-16 for 16GB VRAM GPUs
+    DIARIZATION_EMBEDDING_BATCH_SIZE = 16
+
     # Translation model configuration
     # Options:
     #   - "facebook/m2m100_418M" (smaller, faster, ~2GB VRAM, ~1-2s per segment)
