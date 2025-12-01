@@ -268,15 +268,20 @@ viewer_sessions = set()
 
 # Live summarization state
 current_summary = {
-    "key_points": [],  # List of main discussion points
-    "current_topic": "",  # Current discussion topic (more detailed)
+    "recent_bullets": [],  # Bullet points about recent ~10 min discussion
+    "overview_sections": [],  # Sections covering full meeting: [{title: "...", bullets: [...]}]
     "last_updated": None,
     "segments_summarized": 0,
     "time_range": ""  # Time range of summarized content (e.g., "14:30:15 - 14:35:22")
 }
+# Previous overview for summarization chaining (model builds on this)
+previous_overview_text = ""  # Formatted text of last overview for context
 summary_lock = threading.Lock()
 last_summary_time = 0
-accumulated_segments = []  # Segments since last summary
+last_summary_segment_count = 0  # Track how many segments were in last summary
+all_meeting_segments = []  # FULL meeting transcript (never cleared)
+meeting_start_time = None  # Track when meeting started (first transcription)
+summary_pending = False  # Track if a summary generation is waiting
 
 # VRAM tracking for admin stats display
 model_vram_usage = {
@@ -289,7 +294,16 @@ gpu_total_memory = 0  # Total GPU memory in GB
 
 
 def initialize_models():
-    """Initialize Whisper, M2M100, Speaker Diarization, and Summarization models"""
+    """Initialize Whisper, M2M100, Speaker Diarization, and Summarization models
+
+    Model loading order with MODEL_ROTATION enabled:
+    1. Load Summarization model on GPU (needs GPU for initial loading)
+    2. Immediately move it to CPU to free VRAM
+    3. Load transcription models (Whisper, Translation, Diarization) on GPU
+
+    This ensures transcription models have maximum VRAM available during normal operation.
+    When summarization is needed, transcription models swap to CPU and summarization moves to GPU.
+    """
     global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline, summarization_pipe
     global model_vram_usage, gpu_total_memory
 
@@ -332,6 +346,63 @@ def initialize_models():
         model_count += 1
     current_model = 0
 
+    # ==================== PHASE 1: Load Summarization (will be moved to CPU) ====================
+    # When MODEL_ROTATION is enabled, we load summarization FIRST so we can move it to CPU
+    # before loading the transcription models. This maximizes VRAM for real-time transcription.
+    summarization_pipe = None
+    if Config.ENABLE_SUMMARIZATION:
+        current_model += 1
+        print(f"[{current_model}/{model_count}] Loading Summarization Model: {Config.SUMMARIZATION_MODEL}")
+        if Config.ENABLE_MODEL_ROTATION:
+            print(f"      (Will be moved to CPU after loading - MODEL_ROTATION enabled)")
+
+        # Track VRAM before loading
+        pre_summarization_mem = torch.cuda.memory_allocated(0) / 1024**3 if device == "cuda" else 0
+
+        try:
+            summarization_pipe = pipeline(
+                "text-generation",
+                model=Config.SUMMARIZATION_MODEL,
+                device=0 if device == "cuda" else -1,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                trust_remote_code=True,
+            )
+
+            if device == "cuda":
+                total_mem = torch.cuda.memory_allocated(0) / 1024**3
+                summarization_mem = total_mem - pre_summarization_mem
+                model_vram_usage["summarization"] = summarization_mem
+                print(f"      [OK] Loaded successfully")
+                print(f"      GPU Memory: {total_mem:.2f} GB allocated")
+                print(f"      Model Size: ~{summarization_mem:.2f} GB")
+
+                # Immediately move to CPU if MODEL_ROTATION is enabled
+                if Config.ENABLE_MODEL_ROTATION:
+                    print(f"      Moving summarization model to CPU...")
+                    summarization_pipe.model.to("cpu")
+                    summarization_pipe.device = torch.device("cpu")
+                    torch.cuda.empty_cache()
+                    print(f"      [OK] Moved to CPU, GPU freed: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB now allocated")
+            else:
+                print(f"      [OK] Loaded successfully (CPU)")
+            print()
+        except Exception as e:
+            error_msg = (
+                "\n" + "=" * 80 + "\n"
+                "CRITICAL ERROR: Failed to load summarization model!\n"
+                f"Model: {Config.SUMMARIZATION_MODEL}\n"
+                f"Error: {e}\n\n"
+                "To fix this:\n"
+                "1. Check that the model name is correct\n"
+                "2. Install any missing dependencies (e.g., pip install tiktoken)\n"
+                "3. Note: Phi-3-small requires Triton (Linux only)\n"
+                "4. Or set ENABLE_SUMMARIZATION=False in .env to disable summarization\n"
+                + "=" * 80 + "\n"
+            )
+            print(error_msg)
+            raise RuntimeError(f"Failed to load summarization model: {e}")
+
+    # ==================== PHASE 2: Load Transcription Models ====================
     # Initialize Whisper with word-level timestamps for precise speaker alignment
     current_model += 1
     print(f"[{current_model}/{model_count}] Loading Whisper Model: {Config.WHISPER_MODEL}")
@@ -434,45 +505,14 @@ def initialize_models():
         print(f"      All transcriptions will appear without speaker labels.")
         print()
 
-    # Initialize Summarization Model (conditionally)
-    summarization_pipe = None
-    if Config.ENABLE_SUMMARIZATION:
-        current_model += 1
-        print(f"[{current_model}/{model_count}] Loading Summarization Model: {Config.SUMMARIZATION_MODEL}")
-
-        # Track VRAM before loading
-        pre_summarization_mem = torch.cuda.memory_allocated(0) / 1024**3 if device == "cuda" else 0
-
-        try:
-            summarization_pipe = pipeline(
-                "text-generation",
-                model=Config.SUMMARIZATION_MODEL,
-                device=0 if device == "cuda" else -1,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                trust_remote_code=True,
-            )
-
-            if device == "cuda":
-                total_mem = torch.cuda.memory_allocated(0) / 1024**3
-                summarization_mem = total_mem - pre_summarization_mem
-                model_vram_usage["summarization"] = summarization_mem
-                print(f"      [OK] Loaded successfully")
-                print(f"      GPU Memory: {total_mem:.2f} GB allocated (total)")
-                print(f"      Model Size: ~{summarization_mem:.2f} GB")
-            else:
-                print(f"      [OK] Loaded successfully (CPU)")
-            print()
-        except Exception as e:
-            print(f"      [WARNING] Failed to load summarization model: {e}")
-            print(f"      Live summarization will be disabled.")
-            summarization_pipe = None
-            print()
-
+    # ==================== INITIALIZATION COMPLETE ====================
     print("=" * 80)
     print("ALL MODELS LOADED SUCCESSFULLY!")
     if device == "cuda":
-        print(f"Total GPU Memory Used: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        print(f"Transcription Models VRAM: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         print(f"GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB")
+        if Config.ENABLE_SUMMARIZATION and Config.ENABLE_MODEL_ROTATION:
+            print(f"Summarization Model: On CPU (will swap to GPU when needed)")
     print("=" * 80 + "\n")
 
 
@@ -483,8 +523,13 @@ model_rotation_lock = threading.Lock()
 
 
 def offload_models_to_cpu():
-    """Offload Whisper, Translation, and Diarization models to CPU to free VRAM for summarization"""
-    global transcription_pipe, translation_model, diarization_pipeline, models_offloaded, model_vram_usage
+    """Offload Whisper, Translation, and Diarization models to CPU and load Summarization to GPU.
+
+    This is called before summarization to:
+    1. Move transcription models (Whisper, Translation, Diarization) to CPU
+    2. Move summarization model to GPU for inference
+    """
+    global transcription_pipe, translation_model, diarization_pipeline, summarization_pipe, models_offloaded, model_vram_usage
 
     if not Config.ENABLE_MODEL_ROTATION:
         return False
@@ -493,44 +538,62 @@ def offload_models_to_cpu():
         if models_offloaded:
             return True  # Already offloaded
 
-        print("[MODEL ROTATION] Offloading models to CPU...")
+        print("[MODEL ROTATION] Swapping models for summarization...")
         start_time = time.time()
 
         try:
-            # Offload Whisper model
+            # Clear CUDA cache first to defragment memory before offloading
+            torch.cuda.empty_cache()
+            print("  - CUDA cache cleared (pre-swap)")
+
+            # Offload Whisper model to CPU
             if transcription_pipe is not None:
                 transcription_pipe.model.to("cpu")
+                transcription_pipe.device = torch.device("cpu")
                 print("  - Whisper model moved to CPU")
 
-            # Offload Translation model
+            # Offload Translation model to CPU
             if translation_model is not None:
                 translation_model.to("cpu")
                 print("  - Translation model moved to CPU")
 
-            # Offload Diarization pipeline
+            # NOTE: Diarization pipeline stays on GPU - it doesn't cleanly support device swapping
+            # and causes CUDA memory corruption errors when moved. This is a pyannote limitation.
+            # The ~1-2GB it uses is acceptable since Phi-3-mini only needs ~3GB.
             if diarization_pipeline is not None:
-                diarization_pipeline.to(torch.device("cpu"))
-                print("  - Diarization pipeline moved to CPU")
+                print("  - Diarization pipeline stays on GPU (pyannote doesn't support device swap)")
 
-            # Clear CUDA cache
+            # Clear CUDA cache to release memory from transcription models
             torch.cuda.empty_cache()
+            print("  - CUDA cache cleared (post-offload)")
+
+            # Move Summarization model to GPU for inference
+            if summarization_pipe is not None:
+                summarization_pipe.model.to("cuda")
+                summarization_pipe.device = torch.device("cuda")
+                print("  - Summarization model moved to GPU")
 
             models_offloaded = True
             elapsed = time.time() - start_time
             vram_after = torch.cuda.memory_allocated(0) / 1024**3
-            print(f"[MODEL ROTATION] Models offloaded in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB")
+            print(f"[MODEL ROTATION] Swap complete in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB (summarization on GPU)")
             return True
 
         except Exception as e:
-            print(f"[MODEL ROTATION] Error offloading models: {e}")
+            print(f"[MODEL ROTATION] Error during model swap: {e}")
             import traceback
             traceback.print_exc()
             return False
 
 
 def reload_models_to_gpu():
-    """Reload Whisper, Translation, and Diarization models back to GPU"""
-    global transcription_pipe, translation_model, diarization_pipeline, models_offloaded, model_vram_usage
+    """Reload Whisper, Translation, and Diarization models back to GPU and move Summarization to CPU.
+
+    This is called after summarization completes to:
+    1. Move summarization model back to CPU
+    2. Move transcription models (Whisper, Translation, Diarization) back to GPU
+    """
+    global transcription_pipe, translation_model, diarization_pipeline, summarization_pipe, models_offloaded, model_vram_usage
 
     if not Config.ENABLE_MODEL_ROTATION:
         return False
@@ -539,29 +602,42 @@ def reload_models_to_gpu():
         if not models_offloaded:
             return True  # Already on GPU
 
-        print("[MODEL ROTATION] Reloading models to GPU...")
+        print("[MODEL ROTATION] Swapping models back for transcription...")
         start_time = time.time()
 
         try:
-            # Reload Whisper model
+            # Move Summarization model back to CPU first
+            if summarization_pipe is not None:
+                summarization_pipe.model.to("cpu")
+                summarization_pipe.device = torch.device("cpu")
+                print("  - Summarization model moved to CPU")
+
+            # Clear CUDA cache to release memory from summarization model
+            torch.cuda.empty_cache()
+            print("  - CUDA cache cleared (post-summarization)")
+
+            # Reload Whisper model to GPU
             if transcription_pipe is not None:
                 transcription_pipe.model.to("cuda")
+                transcription_pipe.device = torch.device("cuda")
                 print("  - Whisper model moved to GPU")
 
-            # Reload Translation model
+            # Reload Translation model to GPU
             if translation_model is not None:
                 translation_model.to("cuda")
                 print("  - Translation model moved to GPU")
 
-            # Reload Diarization pipeline
+            # Diarization pipeline stays on GPU - no need to reload
             if diarization_pipeline is not None:
-                diarization_pipeline.to(torch.device("cuda"))
-                print("  - Diarization pipeline moved to GPU")
+                print("  - Diarization pipeline already on GPU")
+
+            # Clear CUDA cache to clean up fragmentation
+            torch.cuda.empty_cache()
 
             models_offloaded = False
             elapsed = time.time() - start_time
             vram_after = torch.cuda.memory_allocated(0) / 1024**3
-            print(f"[MODEL ROTATION] Models reloaded in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB")
+            print(f"[MODEL ROTATION] Swap complete in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB (transcription on GPU)")
             return True
 
         except Exception as e:
@@ -600,9 +676,16 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
-def generate_summary(transcript_text, time_range=""):
-    """Generate a structured summary using the local LLM"""
-    global current_summary, last_summary_time, accumulated_segments, summarization_active
+def generate_summary(previous_overview, new_transcript, time_range="", minutes_since_start=0):
+    """Generate a structured summary using summarization chaining.
+
+    Args:
+        previous_overview: The overview from the last summary (for context/continuity)
+        new_transcript: New transcript segments since the last summary
+        time_range: Time range of the full meeting
+        minutes_since_start: How long the meeting has been going
+    """
+    global current_summary, last_summary_time, all_meeting_segments, summarization_active
 
     if summarization_pipe is None:
         return None
@@ -616,31 +699,64 @@ def generate_summary(transcript_text, time_range=""):
     summarization_active = True
 
     try:
-        # Build the prompt for structured summary
-        prompt = f"""<|im_start|>system
-You are a meeting summarizer. Analyze the transcript and provide a structured summary.
-Output ONLY valid JSON with this exact format, no other text:
-{{"key_points": ["point 1", "point 2", "point 3"], "current_topic": "detailed description of current discussion"}}
-<|im_end|>
-<|im_start|>user
-Summarize this meeting transcript:
+        # Build context section based on whether we have previous overview
+        if previous_overview:
+            context_section = f"""PREVIOUS MEETING SUMMARY (what was discussed before):
+{previous_overview}
 
-{transcript_text}
-<|im_end|>
-<|im_start|>assistant
+---
+
+NEW DISCUSSION (since last summary - analyze this carefully):
+{new_transcript}"""
+        else:
+            # First summary - no previous context
+            context_section = f"""MEETING TRANSCRIPT (first summary):
+{new_transcript}"""
+
+        # Build the prompt for structured summary (Phi-3 format)
+        prompt = f"""<|user|>
+You are a meeting summarizer helping someone who just joined catch up on the meeting.
+IMPORTANT: Never mention speakers (Speaker 1, Speaker 2, etc.) - focus ONLY on WHAT is being discussed.
+Output ONLY valid JSON, no other text before or after.
+
+The meeting has been going for {minutes_since_start} minutes. Time range: {time_range}
+
+{context_section}
+
+---
+
+Provide a summary in this EXACT JSON format:
+{{
+  "recent_bullets": ["bullet point 1 about the NEW discussion", "bullet point 2", "...as many as needed"],
+  "overview_sections": [
+    {{"title": "Topic/Theme Name", "bullets": ["key point 1", "key point 2"]}},
+    {{"title": "Another Topic", "bullets": ["key point 1", "key point 2"]}}
+  ]
+}}
+
+Rules:
+- recent_bullets: Detailed bullet points about the NEW transcript section. Be specific.
+- overview_sections: COMBINE the previous summary topics with new information. Group the ENTIRE meeting into logical topics/themes. Update existing topics if new info relates to them, or add new sections for new topics.
+- Never mention speaker names or numbers
+- Focus on CONTENT - what decisions were made, what was discussed, what problems were raised
+<|end|>
+<|assistant|>
 """
 
-        # Generate summary
+        # Generate summary - allow more tokens for detailed output
+        # use_cache=False avoids DynamicCache compatibility issues with Phi-3
         result = summarization_pipe(
             prompt,
-            max_new_tokens=500,
+            max_new_tokens=1500,
             do_sample=True,
-            temperature=0.7,
+            temperature=0.5,
             top_p=0.9,
             return_full_text=False,
+            use_cache=False,
         )
 
         generated_text = result[0]["generated_text"].strip()
+        print(f"[SUMMARY] Raw LLM output: {generated_text[:500]}...")
 
         # Parse the JSON response
         import json
@@ -652,16 +768,20 @@ Summarize this meeting transcript:
             summary_data = json.loads(json_str)
 
             with summary_lock:
-                current_summary["key_points"] = summary_data.get("key_points", [])[:5]  # Limit to 5 points
-                current_summary["current_topic"] = summary_data.get("current_topic", "")
+                # Update recent bullets (detailed view of last ~10 min)
+                current_summary["recent_bullets"] = summary_data.get("recent_bullets", [])
+
+                # Update overview sections (full meeting grouped by topic)
+                current_summary["overview_sections"] = summary_data.get("overview_sections", [])
+
                 current_summary["last_updated"] = time.time()
-                current_summary["segments_summarized"] = len(accumulated_segments)
+                current_summary["segments_summarized"] = len(all_meeting_segments)
                 current_summary["time_range"] = time_range
 
-            print(f"[SUMMARY] Generated summary with {len(current_summary['key_points'])} key points")
+            print(f"[SUMMARY] Generated summary: {len(current_summary['recent_bullets'])} recent bullets, {len(current_summary['overview_sections'])} overview sections")
             return current_summary
         else:
-            print(f"[SUMMARY] Could not parse JSON from response: {generated_text[:200]}")
+            print(f"[SUMMARY] Could not parse JSON from response: {generated_text[:500]}")
             return None
 
     except Exception as e:
@@ -679,43 +799,88 @@ Summarize this meeting transcript:
 
 
 def check_and_generate_summary():
-    """Check if it's time to generate a new summary and do so if needed"""
-    global last_summary_time, accumulated_segments
+    """Check if it's time to schedule a summary (called after each transcription completes)"""
+    global last_summary_time, all_meeting_segments, meeting_start_time, summary_pending
 
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
         return
 
     current_time = time.time()
 
-    # Only generate summary if enough time has passed and we have content
+    # Check if it's time for a summary
     if (current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
-            and len(accumulated_segments) > 0):
+            and len(all_meeting_segments) > 0
+            and not summary_pending):
+        # Mark summary as pending - it will run after current transcription completes
+        summary_pending = True
+        print(f"[SUMMARY] Summary scheduled - will generate after current processing completes")
 
-        # Build transcript from accumulated segments with timestamps
-        transcript_lines = []
-        for seg in accumulated_segments:
-            speaker = seg.get("speaker", "Speaker")
-            text = seg.get("text", "")
-            ts = seg.get("timestamp", "")
-            transcript_lines.append(f"[{ts}] {speaker}: {text}")
 
-        transcript_text = "\n".join(transcript_lines)
+def run_pending_summary():
+    """Actually run the summary generation using summarization chaining.
 
-        # Get time range of summarized content
-        first_timestamp = accumulated_segments[0].get("timestamp", "") if accumulated_segments else ""
-        last_timestamp = accumulated_segments[-1].get("timestamp", "") if accumulated_segments else ""
-        time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
+    Strategy: Feed model the PREVIOUS overview + NEW transcript since last summary.
+    This allows the model to build on its previous summary rather than re-processing everything.
+    """
+    global last_summary_time, last_summary_segment_count, all_meeting_segments, meeting_start_time, summary_pending, previous_overview_text
 
-        # Only summarize if we have enough content (at least 100 characters)
-        if len(transcript_text) > 100:
-            print(f"[SUMMARY] Generating summary for {len(accumulated_segments)} segments ({time_range})...")
+    if not summary_pending:
+        return
 
-            # Generate in background thread to not block
-            def generate_and_emit():
-                global last_summary_time
-                summary = generate_summary(transcript_text, time_range)
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        summary_pending = False
+        return
+
+    if len(all_meeting_segments) == 0:
+        summary_pending = False
+        return
+
+    current_time = time.time()
+
+    # Get NEW segments since last summary (for recent transcript)
+    new_segments = all_meeting_segments[last_summary_segment_count:]
+
+    # Build transcript of NEW segments only (since last summary)
+    new_transcript_lines = []
+    for seg in new_segments:
+        text = seg.get("text", "")
+        ts = seg.get("timestamp", "")
+        new_transcript_lines.append(f"[{ts}] {text}")
+
+    new_transcript_text = "\n".join(new_transcript_lines)
+
+    # Get time range
+    first_timestamp = all_meeting_segments[0].get("timestamp", "") if all_meeting_segments else ""
+    last_timestamp = all_meeting_segments[-1].get("timestamp", "") if all_meeting_segments else ""
+    time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
+
+    # Calculate minutes since meeting start
+    minutes_since_start = 0
+    if meeting_start_time is not None:
+        minutes_since_start = int((current_time - meeting_start_time) / 60)
+
+    # Only summarize if we have new content
+    if len(new_transcript_text) > 50 or (len(all_meeting_segments) > 0 and last_summary_segment_count == 0):
+        print(f"[SUMMARY] Generating summary: {len(all_meeting_segments)} total segments, {len(new_segments)} new since last summary")
+        print(f"[SUMMARY] Previous overview: {len(previous_overview_text)} chars, New transcript: {len(new_transcript_text)} chars")
+        print(f"[SUMMARY] {minutes_since_start}min into meeting, time range: {time_range}")
+
+        # Generate in background thread to not block
+        def generate_and_emit():
+            global last_summary_time, last_summary_segment_count, summary_pending, previous_overview_text
+            try:
+                summary = generate_summary(previous_overview_text, new_transcript_text, time_range, minutes_since_start)
                 if summary:
                     last_summary_time = time.time()
+                    last_summary_segment_count = len(all_meeting_segments)
+
+                    # Store the overview text for next iteration (summarization chaining)
+                    overview_lines = []
+                    for section in summary.get("overview_sections", []):
+                        overview_lines.append(f"## {section.get('title', 'Topic')}")
+                        for bullet in section.get("bullets", []):
+                            overview_lines.append(f"- {bullet}")
+                    previous_overview_text = "\n".join(overview_lines)
 
                     # Emit original summary to admin room
                     socketio.emit('summary_update', summary, room='admin')
@@ -726,9 +891,13 @@ def check_and_generate_summary():
                             # Translate summary for this language
                             translated_summary = translate_summary(summary, lang_code)
                             socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+            finally:
+                summary_pending = False
 
-            summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
-            summary_thread.start()
+        summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
+        summary_thread.start()
+    else:
+        summary_pending = False
 
 
 def translate_summary(summary, target_lang, source_lang="en"):
@@ -738,23 +907,29 @@ def translate_summary(summary, target_lang, source_lang="en"):
 
     try:
         translated_summary = {
-            "key_points": [],
-            "current_topic": "",
+            "recent_bullets": [],
+            "overview_sections": [],
             "last_updated": summary.get("last_updated"),
             "segments_summarized": summary.get("segments_summarized", 0),
             "time_range": summary.get("time_range", "")  # Don't translate timestamps
         }
 
-        # Translate each key point
-        for point in summary.get("key_points", []):
-            translated_point = translate_text(point, source_lang, target_lang)
-            translated_summary["key_points"].append(translated_point)
+        # Translate recent bullets
+        for bullet in summary.get("recent_bullets", []):
+            translated_bullet = translate_text(bullet, source_lang, target_lang)
+            translated_summary["recent_bullets"].append(translated_bullet)
 
-        # Translate current topic
-        if summary.get("current_topic"):
-            translated_summary["current_topic"] = translate_text(
-                summary["current_topic"], source_lang, target_lang
-            )
+        # Translate overview sections (title + bullets)
+        for section in summary.get("overview_sections", []):
+            translated_section = {
+                "title": translate_text(section.get("title", ""), source_lang, target_lang),
+                "bullets": []
+            }
+            for bullet in section.get("bullets", []):
+                translated_section["bullets"].append(
+                    translate_text(bullet, source_lang, target_lang)
+                )
+            translated_summary["overview_sections"].append(translated_section)
 
         return translated_summary
     except Exception as e:
@@ -852,7 +1027,7 @@ def perform_speaker_diarization(audio_data, sample_rate):
 @torch.inference_mode()
 def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation with speaker diarization"""
-    global is_processing, accumulated_segments
+    global is_processing, all_meeting_segments
 
     try:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1105,10 +1280,18 @@ def transcribe_and_translate(audio_data, audio_duration):
         for seg in segments_with_speakers:
             seg_with_time = seg.copy()
             seg_with_time["timestamp"] = timestamp  # Add human-readable timestamp
-            accumulated_segments.append(seg_with_time)
-        # Keep only last 100 segments to avoid memory bloat
-        if len(accumulated_segments) > 100:
-            accumulated_segments = accumulated_segments[-100:]
+            all_meeting_segments.append(seg_with_time)
+
+        # Set meeting start time on first transcription
+        global meeting_start_time
+        if meeting_start_time is None:
+            meeting_start_time = time.time()
+            print(f"[SUMMARY] Meeting started at {timestamp}")
+
+        # Keep all_meeting_segments reasonable (last 500 segments max - roughly 1-2 hours)
+        # With summarization chaining, we only need new segments since last summary
+        if len(all_meeting_segments) > 500:
+            all_meeting_segments[:] = all_meeting_segments[-500:]
 
         # Check if it's time to generate a summary
         check_and_generate_summary()
@@ -1222,6 +1405,9 @@ def transcribe_and_translate(audio_data, audio_duration):
         traceback.print_exc()
     finally:
         is_processing = False
+        # Now that transcription + translation is complete, run any pending summary
+        # This ensures model rotation doesn't interrupt active transcription
+        run_pending_summary()
 
 
 def process_audio():
@@ -1834,7 +2020,7 @@ def handle_stop_listening():
 @socketio.on("trigger_summary")
 def handle_trigger_summary():
     """Manually trigger a summary generation (admin only)"""
-    global last_summary_time, accumulated_segments
+    global last_summary_time, all_meeting_segments, summary_pending, last_summary_segment_count, previous_overview_text
 
     # Check if user is authenticated admin
     if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
@@ -1845,37 +2031,66 @@ def handle_trigger_summary():
         emit('summary_error', {'message': 'Summarization is not enabled'})
         return
 
-    if len(accumulated_segments) == 0:
+    if len(all_meeting_segments) == 0:
         emit('summary_error', {'message': 'No transcript content to summarize yet'})
         return
 
-    # Build transcript from accumulated segments with timestamps
-    transcript_lines = []
-    for seg in accumulated_segments:
-        speaker = seg.get("speaker", "Speaker")
-        text = seg.get("text", "")
-        ts = seg.get("timestamp", "")
-        transcript_lines.append(f"[{ts}] {speaker}: {text}")
-
-    transcript_text = "\n".join(transcript_lines)
-
-    # Get time range of summarized content
-    first_timestamp = accumulated_segments[0].get("timestamp", "") if accumulated_segments else ""
-    last_timestamp = accumulated_segments[-1].get("timestamp", "") if accumulated_segments else ""
-    time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
-
-    if len(transcript_text) < 50:
-        emit('summary_error', {'message': 'Not enough content to summarize (need at least 50 characters)'})
+    if summary_pending:
+        emit('summary_error', {'message': 'Summary already pending, please wait'})
         return
 
-    print(f"[SUMMARY] Manual trigger - generating summary for {len(accumulated_segments)} segments ({time_range})...")
+    # Get NEW segments since last summary (for recent transcript)
+    new_segments = all_meeting_segments[last_summary_segment_count:]
+
+    # Build transcript of NEW segments only (since last summary)
+    new_transcript_lines = []
+    for seg in new_segments:
+        text = seg.get("text", "")
+        ts = seg.get("timestamp", "")
+        new_transcript_lines.append(f"[{ts}] {text}")
+
+    new_transcript_text = "\n".join(new_transcript_lines)
+
+    # Get time range of summarized content
+    first_timestamp = all_meeting_segments[0].get("timestamp", "") if all_meeting_segments else ""
+    last_timestamp = all_meeting_segments[-1].get("timestamp", "") if all_meeting_segments else ""
+    time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
+
+    # Calculate minutes since meeting start
+    current_time = time.time()
+    minutes_since_start = 0
+    if meeting_start_time is not None:
+        minutes_since_start = int((current_time - meeting_start_time) / 60)
+
+    if len(new_transcript_text) < 50 and last_summary_segment_count > 0:
+        emit('summary_error', {'message': 'Not enough new content to summarize (need at least 50 new characters)'})
+        return
+
+    # If currently processing transcription, schedule for after completion
+    if is_processing:
+        print(f"[SUMMARY] Manual trigger - scheduling after current transcription completes...")
+        emit('summary_generating', {'message': 'Waiting for transcription to complete...'})
+        summary_pending = True
+        return
+
+    print(f"[SUMMARY] Manual trigger - generating summary for {len(all_meeting_segments)} total segments, {len(new_segments)} new ({time_range})...")
+    emit('summary_generating', {'message': 'Generating...'})
 
     # Generate in background thread to not block
     def generate_and_emit():
-        global last_summary_time
-        summary = generate_summary(transcript_text, time_range)
+        global last_summary_time, last_summary_segment_count, previous_overview_text
+        summary = generate_summary(previous_overview_text, new_transcript_text, time_range, minutes_since_start)
         if summary:
             last_summary_time = time.time()
+            last_summary_segment_count = len(all_meeting_segments)
+
+            # Store the overview text for next iteration (summarization chaining)
+            overview_lines = []
+            for section in summary.get("overview_sections", []):
+                overview_lines.append(f"## {section.get('title', 'Topic')}")
+                for bullet in section.get("bullets", []):
+                    overview_lines.append(f"- {bullet}")
+            previous_overview_text = "\n".join(overview_lines)
 
             # Emit original summary to admin room
             socketio.emit('summary_update', summary, room='admin')
@@ -1890,9 +2105,6 @@ def handle_trigger_summary():
 
     summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
     summary_thread.start()
-
-    # Acknowledge the request
-    emit('summary_generating', {'message': 'Generating summary...'})
 
 
 if __name__ == "__main__":
