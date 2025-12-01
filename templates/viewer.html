@@ -526,31 +526,31 @@
         <div class="summary-panel">
             <div class="panel-header">
                 <div class="panel-title">
-                    <span class="panel-title-icon">...</span>
+                    <span class="panel-title-icon">📋</span>
                     <span>Live Summary</span>
                 </div>
                 <div id="summaryUpdated" class="summary-updated"></div>
             </div>
 
-            <!-- Key Points Section -->
+            <!-- Recent Discussion Section (Top - Bullet points) -->
             <div class="summary-section">
                 <div class="summary-section-title">
-                    <span class="icon">...</span>
-                    Key Points Discussed
+                    <span class="icon">🔍</span>
+                    Recent Discussion
                 </div>
-                <ul class="key-points-list" id="keyPointsList">
-                    <li class="no-data" style="padding: 20px 0;">No key points yet...</li>
+                <ul id="recentBulletsContent" style="background: rgba(102, 126, 234, 0.1); border-left: 3px solid #667eea; padding: 12px 14px 12px 30px; border-radius: 8px; line-height: 1.6; font-size: 13px; margin: 0; list-style-type: disc;">
+                    <li style="color: rgba(255, 255, 255, 0.5);">Waiting for content...</li>
                 </ul>
             </div>
 
-            <!-- Current Topic Section -->
-            <div class="summary-section">
+            <!-- Meeting Overview Section (Bottom - Full meeting by topic) -->
+            <div class="summary-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
                 <div class="summary-section-title">
-                    <span class="icon">...</span>
-                    Current Discussion
+                    <span class="icon">📑</span>
+                    Meeting Overview
                 </div>
-                <div class="current-topic-content" id="currentTopicContent">
-                    <div class="no-data" style="padding: 20px 0;">Waiting for discussion to begin...</div>
+                <div id="overviewSectionsContent" style="flex: 1; overflow-y: auto; background: rgba(0, 0, 0, 0.15); border-radius: 8px; padding: 10px;">
+                    <div class="no-data" style="padding: 20px 0; font-size: 13px;">No topics yet...</div>
                 </div>
             </div>
         </div>
@@ -713,7 +713,8 @@
             const container = document.getElementById('translationsContainer');
             const fragment = document.createDocumentFragment();
 
-            displayedTranslations.forEach(item => {
+            // Render in reverse order (newest first at top)
+            [...displayedTranslations].reverse().forEach(item => {
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'translation-item';
 
@@ -737,7 +738,8 @@
 
             container.innerHTML = '';
             container.appendChild(fragment);
-            container.scrollTop = container.scrollHeight;
+            // Scroll to top to show newest content
+            container.scrollTop = 0;
         }
 
         socket.on('new_translation', (data) => {
@@ -749,6 +751,7 @@
                     });
                 });
 
+                // Keep newest, remove oldest from beginning
                 if (displayedTranslations.length > MAX_TRANSLATIONS) {
                     displayedTranslations = displayedTranslations.slice(-MAX_TRANSLATIONS);
                 }
@@ -759,22 +762,47 @@
 
         // Summary updates
         socket.on('summary_update', (data) => {
-            // Update key points
-            const keyPointsList = document.getElementById('keyPointsList');
-            if (data.key_points && data.key_points.length > 0) {
-                keyPointsList.innerHTML = '';
-                data.key_points.forEach(point => {
-                    const li = document.createElement('li');
-                    li.className = 'key-point-item';
-                    li.innerHTML = `<span class="key-point-bullet">*</span><span>${point}</span>`;
-                    keyPointsList.appendChild(li);
-                });
+            // Update recent bullets (detailed bullet points about recent discussion)
+            const recentBulletsEl = document.getElementById('recentBulletsContent');
+            const recentBullets = data.recent_bullets || [];
+            if (recentBullets.length > 0) {
+                recentBulletsEl.innerHTML = recentBullets.map(bullet =>
+                    `<li style="margin-bottom: 6px; color: rgba(255, 255, 255, 0.9);">${bullet}</li>`
+                ).join('');
             }
 
-            // Update current topic
-            const currentTopicContent = document.getElementById('currentTopicContent');
-            if (data.current_topic) {
-                currentTopicContent.innerHTML = `<div class="current-topic-text">${data.current_topic}</div>`;
+            // Update overview sections (full meeting grouped by topic)
+            const overviewEl = document.getElementById('overviewSectionsContent');
+            const sections = data.overview_sections || [];
+            if (sections.length > 0) {
+                overviewEl.innerHTML = '';
+                sections.forEach((section, index) => {
+                    const sectionDiv = document.createElement('div');
+                    sectionDiv.style.cssText = 'margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.1);';
+                    if (index === sections.length - 1) {
+                        sectionDiv.style.borderBottom = 'none';
+                        sectionDiv.style.marginBottom = '0';
+                    }
+
+                    // Section title
+                    const titleDiv = document.createElement('div');
+                    titleDiv.style.cssText = 'font-weight: 600; color: #667eea; margin-bottom: 8px; font-size: 13px;';
+                    titleDiv.textContent = section.title || 'Topic';
+                    sectionDiv.appendChild(titleDiv);
+
+                    // Section bullets
+                    const bulletsList = document.createElement('ul');
+                    bulletsList.style.cssText = 'margin: 0; padding-left: 20px; list-style-type: disc;';
+                    (section.bullets || []).forEach(bullet => {
+                        const li = document.createElement('li');
+                        li.style.cssText = 'margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.4;';
+                        li.textContent = bullet;
+                        bulletsList.appendChild(li);
+                    });
+                    sectionDiv.appendChild(bulletsList);
+
+                    overviewEl.appendChild(sectionDiv);
+                });
             }
 
             // Update timestamp
