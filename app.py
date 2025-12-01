@@ -245,7 +245,7 @@ def initialize_models():
             diarization_pipeline.to(torch.device("cuda"))
             # Reduce embedding batch size to prevent VRAM spikes during inference
             # Default is 32, which can cause memory to spike from ~8GB to ~16GB
-            diarization_pipeline.embedding_batch_size = 16
+            diarization_pipeline.embedding_batch_size = Config.DIARIZATION_EMBEDDING_BATCH_SIZE
             total_mem = torch.cuda.memory_allocated(0) / 1024**3
             diarization_mem = total_mem - translation_mem
             model_vram_usage["diarization"] = diarization_mem
@@ -1063,8 +1063,8 @@ def start_stats_emitter():
             except Exception as e:
                 print(f"[STATS] Error emitting stats: {e}")
 
-            # Sleep for 2 seconds between updates
-            time.sleep(2)
+            # Sleep for 500ms between updates (2 updates/sec)
+            time.sleep(0.5)
 
     stats_thread = threading.Thread(target=emit_stats_loop, daemon=True)
     stats_thread.start()
