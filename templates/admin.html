@@ -199,6 +199,21 @@
             animation: debugFlash 1s ease-in-out 1;
         }
 
+        @keyframes staleWarning {
+            0%, 100% {
+                color: #ef4444;
+                text-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+            }
+            50% {
+                color: #fca5a5;
+                text-shadow: 0 0 15px rgba(239, 68, 68, 1);
+            }
+        }
+
+        .broadcast-stale {
+            animation: staleWarning 1s ease-in-out infinite;
+        }
+
         .audio-visualizer {
             display: inline-flex;
             align-items: flex-end;
@@ -811,11 +826,12 @@ Example:
 
 **Key Points:**
 - Important point 1
-- Important point 2" style="flex: 1; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(236, 72, 153, 0.3); border-radius: 8px; padding: 10px; color: white; font-family: monospace; font-size: 12px; resize: none; line-height: 1.5;"></textarea>
+- Important point 2" style="flex: 1; max-height: 400px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(236, 72, 153, 0.3); border-radius: 8px; padding: 10px; color: white; font-family: monospace; font-size: 12px; resize: none; line-height: 1.5; overflow-y: auto;"></textarea>
                         </div>
-                        <div style="margin-top: 12px; font-size: 11px; color: #6b7280; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between;">
+                        <div style="margin-top: 12px; font-size: 11px; color: #6b7280; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
                             <span>Time range: <span id="summaryTimeRange" style="color: #ec4899;">--</span></span>
-                            <span>Updated: <span id="summaryLastUpdated">--</span></span>
+                            <span>Auto-summary: <span id="summaryLastUpdated">--</span></span>
+                            <span>Last broadcast: <span id="lastBroadcastTime" style="color: #22c55e;">Never</span></span>
                         </div>
                     </div>
                 </div>
@@ -1418,6 +1434,9 @@ Example:
             });
         }
 
+        // Track last broadcast time
+        let lastBroadcastTimestamp = null;
+
         // Handle confirmation of manual summary broadcast
         socket.on('manual_summary_broadcast', (data) => {
             if (data.success) {
@@ -1429,8 +1448,61 @@ Example:
                     btn.style.background = 'linear-gradient(135deg, #ec4899, #be185d)';
                     btn.textContent = 'Broadcast';
                 }, 2000);
+
+                // Update last broadcast timestamp
+                lastBroadcastTimestamp = Date.now();
+                updateLastBroadcastDisplay();
             }
         });
+
+        // Update the last broadcast time display
+        function updateLastBroadcastDisplay() {
+            const el = document.getElementById('lastBroadcastTime');
+            if (!lastBroadcastTimestamp) {
+                el.textContent = 'Never';
+                el.className = '';
+                el.style.color = '#6b7280';
+                return;
+            }
+
+            const now = Date.now();
+            const diffMs = now - lastBroadcastTimestamp;
+            const diffMin = Math.floor(diffMs / 60000);
+            const diffSec = Math.floor((diffMs % 60000) / 1000);
+
+            // Format the absolute time
+            const broadcastTime = new Date(lastBroadcastTimestamp);
+            const timeStr = broadcastTime.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+
+            // Format relative time
+            let relativeStr;
+            if (diffMin < 1) {
+                relativeStr = `${diffSec}s ago`;
+            } else if (diffMin < 60) {
+                relativeStr = `${diffMin}m ago`;
+            } else {
+                const diffHours = Math.floor(diffMin / 60);
+                relativeStr = `${diffHours}h ${diffMin % 60}m ago`;
+            }
+
+            el.textContent = `${timeStr} (${relativeStr})`;
+
+            // Check if stale (> 15 minutes)
+            if (diffMin >= 15) {
+                el.className = 'broadcast-stale';
+                el.style.color = '';  // Let animation control color
+            } else {
+                el.className = '';
+                el.style.color = '#22c55e';
+            }
+        }
+
+        // Update the display every 10 seconds
+        setInterval(updateLastBroadcastDisplay, 10000);
 
         // Toggle summarization on/off (kill switch)
         let summarizationActive = true;
