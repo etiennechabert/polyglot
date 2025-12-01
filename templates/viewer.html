@@ -497,6 +497,23 @@
         </div>
     </div>
 
+    <!-- Summarization Banner (shown when summary is being generated) -->
+    <div id="summarizationBanner" style="display: none; position: fixed; top: 0; left: 0; right: 0; background: linear-gradient(135deg, rgba(236, 72, 153, 0.95) 0%, rgba(139, 92, 246, 0.95) 100%); padding: 10px 20px; z-index: 1000; text-align: center;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+            <div style="font-size: 20px; animation: spin 2s linear infinite;">⏳</div>
+            <div style="color: white; font-weight: 600; font-size: 14px;">
+                Generating Summary... <span id="summarizationElapsed" style="color: #fbbf24;">0s</span>
+                <span style="opacity: 0.8; margin-left: 8px;">(Translation paused)</span>
+            </div>
+        </div>
+    </div>
+    <style>
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+
     <!-- Viewer Screen - Split Layout -->
     <div class="viewer-container" id="viewerContainer">
         <!-- Left Panel: Transcript/Translation -->
@@ -507,6 +524,9 @@
                     <span id="translationLanguage">Translation</span>
                 </div>
                 <div class="header-controls">
+                    <div id="viewerLagTimer" style="font-size: 11px; color: rgba(255, 255, 255, 0.6); padding: 4px 8px; background: rgba(0, 0, 0, 0.3); border-radius: 6px; display: none; margin-right: 8px;">
+                        Lag: <span id="viewerLagSeconds">0</span>s
+                    </div>
                     <span class="status-badge">
                         <span id="connectionDot" class="status-dot disconnected"></span>
                         <span id="connectionStatus">Disconnected</span>
@@ -742,8 +762,32 @@
             container.scrollTop = 0;
         }
 
+        // Lag timer tracking
+        let lastViewerTranslationTime = null;
+        let viewerLagTimerInterval = null;
+
+        function startViewerLagTimer() {
+            if (viewerLagTimerInterval) return;
+            document.getElementById('viewerLagTimer').style.display = 'block';
+            viewerLagTimerInterval = setInterval(() => {
+                if (lastViewerTranslationTime) {
+                    const lagSec = Math.floor((Date.now() - lastViewerTranslationTime) / 1000);
+                    document.getElementById('viewerLagSeconds').textContent = lagSec;
+                }
+            }, 1000);
+        }
+
+        function resetViewerLagTimer() {
+            lastViewerTranslationTime = Date.now();
+            document.getElementById('viewerLagSeconds').textContent = '0';
+            startViewerLagTimer();
+        }
+
         socket.on('new_translation', (data) => {
             if (selectedLanguage && data.translated_segments && data.translated_segments[selectedLanguage]) {
+                // Reset lag timer on new translation
+                resetViewerLagTimer();
+
                 data.translated_segments[selectedLanguage].forEach(segment => {
                     displayedTranslations.push({
                         text: segment.text,
@@ -813,6 +857,17 @@
                     minute: '2-digit',
                     hour12: false
                 });
+            }
+        });
+
+        // System stats (for summarization banner)
+        socket.on('system_stats', (stats) => {
+            if (stats.gpu && stats.gpu.summarization_started_at) {
+                const elapsedSec = Math.floor(Date.now() / 1000 - stats.gpu.summarization_started_at);
+                document.getElementById('summarizationElapsed').textContent = elapsedSec + 's';
+                document.getElementById('summarizationBanner').style.display = 'block';
+            } else {
+                document.getElementById('summarizationBanner').style.display = 'none';
             }
         });
 
