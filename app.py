@@ -6,6 +6,7 @@ Captures system audio and translates speech into multiple languages simultaneous
 import argparse
 import os
 import queue
+import random
 import sys
 import threading
 import time
@@ -14,6 +15,153 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+
+
+def log(message, tag=None):
+    """Print a log message with timestamp. Tag is optional prefix like [SUMMARY]"""
+    ts = datetime.now().strftime('%H:%M:%S')
+    if tag:
+        print(f"[{ts}] [{tag}] {message}")
+    else:
+        print(f"[{ts}] {message}")
+
+
+# Word list for generating memorable passphrases
+PASSPHRASE_WORDS = [
+    "apple", "banana", "cherry", "dragon", "eagle", "forest", "garden", "harbor",
+    "island", "jungle", "kite", "lemon", "mountain", "night", "ocean", "planet",
+    "queen", "river", "sunset", "thunder", "umbrella", "valley", "winter", "yellow",
+    "zebra", "anchor", "bridge", "castle", "dolphin", "ember", "falcon", "glacier",
+    "horizon", "ivory", "jasmine", "kingdom", "lantern", "meadow", "nebula", "orchid",
+    "phoenix", "quartz", "rainbow", "silver", "temple", "universe", "velvet", "whisper",
+    "crystal", "breeze", "coral", "dawn", "eclipse", "flame", "golden", "harmony",
+    "indigo", "jewel", "karma", "lunar", "marvel", "nimbus", "opal", "prism",
+    "quest", "radiant", "sapphire", "twilight", "unity", "venture", "wonder", "zenith"
+]
+
+
+def generate_viewer_password():
+    """Generate a 3-word passphrase separated by underscores"""
+    words = random.sample(PASSPHRASE_WORDS, 3)
+    return "_".join(words)
+
+
+def load_saved_password():
+    """Load previously saved viewer password from file"""
+    password_file = Path("viewer_password.txt")
+    if password_file.exists():
+        try:
+            return password_file.read_text().strip()
+        except Exception:
+            return None
+    return None
+
+
+def save_password(password):
+    """Save viewer password to file for reuse"""
+    password_file = Path("viewer_password.txt")
+    password_file.write_text(password)
+
+
+def get_existing_transcripts():
+    """Get list of existing transcript files"""
+    transcripts_dir = Path("transcripts")
+    if not transcripts_dir.exists():
+        return []
+    return sorted(transcripts_dir.glob("*.txt"), key=lambda x: x.stat().st_mtime, reverse=True)
+
+
+def sanitize_filename(name):
+    """Convert meeting name to safe filename"""
+    # Replace spaces with underscores, remove special characters
+    safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '' for c in name)
+    safe_name = safe_name.replace(' ', '_')
+    return safe_name[:50]  # Limit length
+
+
+def startup_configuration():
+    """Interactive startup configuration for meeting and password"""
+    global TRANSCRIPT_FILE, MEETING_NAME
+
+    print("\n" + "=" * 60)
+    print("  POLYGLOT - Startup Configuration")
+    print("=" * 60)
+
+    # --- Password Configuration ---
+    saved_password = load_saved_password()
+    if saved_password:
+        print(f"\n[PASSWORD] Previous viewer password found: {saved_password}")
+        while True:
+            choice = input("  Reuse this password? (Y/n): ").strip().lower()
+            if choice in ('', 'y', 'yes'):
+                Config.VIEWER_PASSWORD = saved_password
+                print(f"  -> Using saved password: {saved_password}")
+                break
+            elif choice in ('n', 'no'):
+                Config.VIEWER_PASSWORD = generate_viewer_password()
+                save_password(Config.VIEWER_PASSWORD)
+                print(f"  -> Generated new password: {Config.VIEWER_PASSWORD}")
+                break
+            else:
+                print("  Please enter 'y' or 'n'")
+    else:
+        Config.VIEWER_PASSWORD = generate_viewer_password()
+        save_password(Config.VIEWER_PASSWORD)
+        print(f"\n[PASSWORD] Generated new viewer password: {Config.VIEWER_PASSWORD}")
+
+    # --- Meeting Name Configuration ---
+    print(f"\n[MEETING] Enter a name for this meeting/session")
+    meeting_name = input("  Meeting name (or press Enter for timestamp): ").strip()
+
+    if meeting_name:
+        MEETING_NAME = meeting_name
+        safe_name = sanitize_filename(meeting_name)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        transcript_filename = f"{safe_name}_{timestamp}.txt"
+    else:
+        MEETING_NAME = f"Meeting {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        transcript_filename = f"transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    # --- Transcript File Configuration ---
+    existing_transcripts = get_existing_transcripts()
+
+    if existing_transcripts:
+        print(f"\n[TRANSCRIPT] Found {len(existing_transcripts)} existing transcript(s):")
+        print("  0. Create NEW transcript file")
+        for i, tf in enumerate(existing_transcripts[:10], 1):  # Show max 10
+            size_kb = tf.stat().st_size / 1024
+            mod_time = datetime.fromtimestamp(tf.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+            print(f"  {i}. {tf.name} ({size_kb:.1f}KB, {mod_time})")
+
+        while True:
+            choice = input("\n  Select transcript (0 for new, or number to continue): ").strip()
+            if choice == '' or choice == '0':
+                # Create new transcript
+                transcripts_dir = Path("transcripts")
+                transcripts_dir.mkdir(exist_ok=True)
+                TRANSCRIPT_FILE = transcripts_dir / transcript_filename
+                print(f"  -> Creating new transcript: {TRANSCRIPT_FILE.name}")
+                break
+            elif choice.isdigit() and 1 <= int(choice) <= min(10, len(existing_transcripts)):
+                TRANSCRIPT_FILE = existing_transcripts[int(choice) - 1]
+                print(f"  -> Continuing transcript: {TRANSCRIPT_FILE.name}")
+                # Update meeting name from filename if continuing
+                MEETING_NAME = TRANSCRIPT_FILE.stem.replace('_', ' ')
+                break
+            else:
+                print("  Invalid choice, please try again")
+    else:
+        # No existing transcripts, create new
+        transcripts_dir = Path("transcripts")
+        transcripts_dir.mkdir(exist_ok=True)
+        TRANSCRIPT_FILE = transcripts_dir / transcript_filename
+        print(f"\n[TRANSCRIPT] Creating new transcript: {TRANSCRIPT_FILE.name}")
+
+    print("\n" + "-" * 60)
+    print(f"  Meeting: {MEETING_NAME}")
+    print(f"  Password: {Config.VIEWER_PASSWORD}")
+    print(f"  Transcript: {TRANSCRIPT_FILE.name}")
+    print("-" * 60 + "\n")
 
 import numpy as np
 import psutil
@@ -88,10 +236,14 @@ from pyannote.audio import Pipeline as DiarizationPipeline
 SAMPLE_RATE = Config.SAMPLE_RATE
 CHUNK_SIZE = Config.CHUNK_SIZE
 
-# Create timestamped transcript file
+# Transcript and password storage paths
 TRANSCRIPTS_DIR = Path("transcripts")
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
-TRANSCRIPT_FILE = TRANSCRIPTS_DIR / f"transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+PASSWORD_FILE = Path("viewer_password.txt")
+
+# Will be set during startup configuration
+TRANSCRIPT_FILE = None
+MEETING_NAME = None
 
 # Dynamic audio detection thresholds (can be changed via API)
 audio_thresholds = Config.get_audio_thresholds()
@@ -108,6 +260,8 @@ transcription_pipe = None
 translation_model = None
 translation_tokenizer = None
 diarization_pipeline = None  # Speaker diarization pipeline
+summarization_pipe = None  # Local LLM for summarization
+summarization_paused = False  # Runtime toggle to pause/resume summarization (kill switch)
 audio_stream = None
 p_audio = None
 actual_sample_rate = 48000  # Will be set to the actual device sample rate
@@ -120,19 +274,107 @@ connected_clients = {}
 active_language_viewers = {lang['code']: 0 for lang in Config.TARGET_LANGUAGES}
 # Track admin sessions
 admin_sessions = set()
+# Track authenticated viewer sessions
+viewer_sessions = set()
+
+# Live summarization state
+current_summary = {
+    "recent_bullets": [],  # Bullet points about recent ~5 min discussion
+    "overview_sections": [],  # Sections covering full meeting: [{title: "...", bullets: [...]}]
+    "last_updated": None,
+    "segments_summarized": 0,
+    "time_range": ""  # Time range of summarized content (e.g., "14:30:15 - 14:35:22")
+}
+# Previous overview for summarization chaining (model builds on this)
+previous_overview_text = ""  # Formatted text of last overview for context
+summary_lock = threading.Lock()
+last_summary_time = time.time()  # Initialize to now so first summary waits for the interval
+last_summary_segment_count = 0  # Track how many segments were in last summary
+all_meeting_segments = []  # FULL meeting transcript (never cleared)
+meeting_start_time = None  # Track when meeting started (first transcription)
+summary_pending = False  # Track if a summary generation is waiting
+
+
+def load_transcript_segments(transcript_path):
+    """Load existing transcript file into all_meeting_segments for summarization.
+
+    Parses lines like: [2025-12-01 19:56:33] [0.00s-11.00s] Text here...
+    """
+    global all_meeting_segments, meeting_start_time
+    import re
+    from datetime import datetime
+
+    if not transcript_path or not transcript_path.exists():
+        return 0
+
+    segments_loaded = 0
+    first_unix_time = None
+
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Parse: [2025-12-01 19:56:33] [0.00s-11.00s] Text...
+                match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)', line)
+                if match:
+                    timestamp_str = match.group(1)
+                    text = match.group(2)
+
+                    # Parse the timestamp to get unix time
+                    try:
+                        dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                        unix_time = dt.timestamp()
+                        if first_unix_time is None:
+                            first_unix_time = unix_time
+                    except ValueError:
+                        unix_time = time.time()
+
+                    # Add segment
+                    all_meeting_segments.append({
+                        "text": text,
+                        "timestamp": timestamp_str,
+                        "unix_time": unix_time,
+                        "start": 0,
+                        "end": 0
+                    })
+                    segments_loaded += 1
+
+        # Set meeting start time from first segment
+        if first_unix_time is not None:
+            meeting_start_time = first_unix_time
+
+        print(f"[TRANSCRIPT] Loaded {segments_loaded} segments from existing transcript")
+
+    except Exception as e:
+        print(f"[TRANSCRIPT] Error loading transcript: {e}")
+
+    return segments_loaded
 
 # VRAM tracking for admin stats display
 model_vram_usage = {
     "whisper": 0,
     "translation": 0,
     "diarization": 0,
+    "summarization": 0,
 }
 gpu_total_memory = 0  # Total GPU memory in GB
 
 
 def initialize_models():
-    """Initialize Whisper, M2M100, and Speaker Diarization models"""
-    global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline
+    """Initialize Whisper, M2M100, Speaker Diarization, and Summarization models
+
+    Model loading order with MODEL_ROTATION enabled:
+    1. Load Summarization model on GPU (needs GPU for initial loading)
+    2. Immediately move it to CPU to free VRAM
+    3. Load transcription models (Whisper, Translation, Diarization) on GPU
+
+    This ensures transcription models have maximum VRAM available during normal operation.
+    When summarization is needed, transcription models swap to CPU and summarization moves to GPU.
+    """
+    global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline, summarization_pipe
     global model_vram_usage, gpu_total_memory
 
     # CRITICAL: Ensure CUDA is available - this app requires GPU
@@ -168,8 +410,72 @@ def initialize_models():
 
     print()
 
+    # Count total models to load
+    model_count = 3 if not Config.ENABLE_DIARIZATION else 4
+    if Config.ENABLE_SUMMARIZATION:
+        model_count += 1
+    current_model = 0
+
+    # ==================== PHASE 1: Load Summarization (will be moved to CPU) ====================
+    # When MODEL_ROTATION is enabled, we load summarization FIRST so we can move it to CPU
+    # before loading the transcription models. This maximizes VRAM for real-time transcription.
+    summarization_pipe = None
+    if Config.ENABLE_SUMMARIZATION:
+        current_model += 1
+        print(f"[{current_model}/{model_count}] Loading Summarization Model: {Config.SUMMARIZATION_MODEL}")
+        if Config.ENABLE_MODEL_ROTATION:
+            print(f"      (Will be moved to CPU after loading - MODEL_ROTATION enabled)")
+
+        # Track VRAM before loading
+        pre_summarization_mem = torch.cuda.memory_allocated(0) / 1024**3 if device == "cuda" else 0
+
+        try:
+            summarization_pipe = pipeline(
+                "text-generation",
+                model=Config.SUMMARIZATION_MODEL,
+                device=0 if device == "cuda" else -1,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                trust_remote_code=True,
+            )
+
+            if device == "cuda":
+                total_mem = torch.cuda.memory_allocated(0) / 1024**3
+                summarization_mem = total_mem - pre_summarization_mem
+                model_vram_usage["summarization"] = summarization_mem
+                print(f"      [OK] Loaded successfully")
+                print(f"      GPU Memory: {total_mem:.2f} GB allocated")
+                print(f"      Model Size: ~{summarization_mem:.2f} GB")
+
+                # Immediately move to CPU if MODEL_ROTATION is enabled
+                if Config.ENABLE_MODEL_ROTATION:
+                    print(f"      Moving summarization model to CPU...")
+                    summarization_pipe.model.to("cpu")
+                    summarization_pipe.device = torch.device("cpu")
+                    torch.cuda.empty_cache()
+                    print(f"      [OK] Moved to CPU, GPU freed: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB now allocated")
+            else:
+                print(f"      [OK] Loaded successfully (CPU)")
+            print()
+        except Exception as e:
+            error_msg = (
+                "\n" + "=" * 80 + "\n"
+                "CRITICAL ERROR: Failed to load summarization model!\n"
+                f"Model: {Config.SUMMARIZATION_MODEL}\n"
+                f"Error: {e}\n\n"
+                "To fix this:\n"
+                "1. Check that the model name is correct\n"
+                "2. Install any missing dependencies (e.g., pip install tiktoken)\n"
+                "3. Note: Phi-3-small requires Triton (Linux only)\n"
+                "4. Or set ENABLE_SUMMARIZATION=False in .env to disable summarization\n"
+                + "=" * 80 + "\n"
+            )
+            print(error_msg)
+            raise RuntimeError(f"Failed to load summarization model: {e}")
+
+    # ==================== PHASE 2: Load Transcription Models ====================
     # Initialize Whisper with word-level timestamps for precise speaker alignment
-    print(f"[1/3] Loading Whisper Model: {Config.WHISPER_MODEL}")
+    current_model += 1
+    print(f"[{current_model}/{model_count}] Loading Whisper Model: {Config.WHISPER_MODEL}")
     # Distil-whisper models use their own namespace, regular models need openai/whisper- prefix
     if "/" in Config.WHISPER_MODEL:
         # Model already has namespace (e.g., distil-whisper/distil-large-v3)
@@ -200,8 +506,9 @@ def initialize_models():
     print()
 
     # Initialize M2M100
+    current_model += 1
     model_name = Config.TRANSLATION_MODEL
-    print(f"[2/3] Loading Translation Model: {model_name}")
+    print(f"[{current_model}/{model_count}] Loading Translation Model: {model_name}")
     translation_model = M2M100ForConditionalGeneration.from_pretrained(model_name)
     translation_tokenizer = M2M100Tokenizer.from_pretrained(model_name)
 
@@ -217,9 +524,10 @@ def initialize_models():
     print()
 
     # Initialize Speaker Diarization (conditionally)
+    current_model += 1
     diarization_pipeline = None
     if Config.ENABLE_DIARIZATION:
-        print(f"[3/3] Loading Speaker Diarization: {Config.DIARIZATION_MODEL}")
+        print(f"[{current_model}/{model_count}] Loading Speaker Diarization: {Config.DIARIZATION_MODEL}")
         if not Config.HF_TOKEN:
             error_msg = (
                 "\n" + "=" * 80 + "\n"
@@ -262,29 +570,124 @@ def initialize_models():
         print(f"      - Min duration off: {Config.MIN_DURATION_OFF}s")
         print()
     else:
-        print(f"[3/3] Speaker Diarization: DISABLED")
+        print(f"[{current_model}/{model_count}] Speaker Diarization: DISABLED")
         print(f"      Speaker identification is turned off (ENABLE_DIARIZATION=False)")
         print(f"      All transcriptions will appear without speaker labels.")
         print()
 
+    # ==================== INITIALIZATION COMPLETE ====================
     print("=" * 80)
     print("ALL MODELS LOADED SUCCESSFULLY!")
     if device == "cuda":
-        print(f"Total GPU Memory Used: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        print(f"Transcription Models VRAM: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         print(f"GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB")
+        if Config.ENABLE_SUMMARIZATION and Config.ENABLE_MODEL_ROTATION:
+            print(f"Summarization Model: On CPU (will swap to GPU when needed)")
     print("=" * 80 + "\n")
+
+
+# Model rotation state tracking
+# When model rotation is enabled:
+# - Transcription models (Whisper, Translation, Diarization) stay on GPU permanently
+# - Summarization model starts on CPU, moves to GPU only during summary generation
+# - Transcription must wait while summarization model is on GPU to avoid VRAM overflow
+summarization_on_gpu = False  # True when summarization model is loaded on GPU
+summarization_started_at = None  # Timestamp when summarization started (for UI feedback)
+model_rotation_lock = threading.Lock()  # Protects summarization_on_gpu state changes
+transcription_lock = threading.Lock()  # Ensures transcription completes before summarization starts
+
+
+def load_summarization_to_gpu():
+    """Move Summarization model from CPU to GPU for inference.
+
+    Called before generating a summary. Transcription must be paused while
+    summarization model is on GPU to avoid VRAM overflow.
+    Note: Translation model stays on GPU - it should not be rotated.
+    """
+    global summarization_pipe, summarization_on_gpu, model_vram_usage
+
+    if not Config.ENABLE_MODEL_ROTATION:
+        return True  # Model already on GPU if rotation disabled
+
+    with model_rotation_lock:
+        if summarization_on_gpu:
+            return True  # Already on GPU
+
+        log("Swapping models for summarization...", "MODEL")
+        start_time = time.time()
+
+        try:
+            vram_before = torch.cuda.memory_allocated(0) / 1024**3
+
+            # Load summarization to GPU (translation model stays on GPU)
+            if summarization_pipe is not None:
+                log("  Moving summarization model to GPU...", "MODEL")
+                summarization_pipe.model.to("cuda")
+                summarization_pipe.device = torch.device("cuda")
+                torch.cuda.empty_cache()
+
+            summarization_on_gpu = True
+            elapsed = time.time() - start_time
+            vram_after = torch.cuda.memory_allocated(0) / 1024**3
+            # Update VRAM tracking for the graph
+            model_vram_usage["summarization"] = vram_after - vram_before
+            log(f"Swap complete in {elapsed:.1f}s, VRAM: {vram_after:.2f} GB", "MODEL")
+            return True
+
+        except Exception as e:
+            log(f"Error loading summarization to GPU: {e}", "MODEL")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+def unload_summarization_to_cpu():
+    """Move Summarization model from GPU back to CPU after summary generation.
+
+    Called after generating a summary. Frees GPU memory for transcription models.
+    Note: Translation model stays on GPU - it should not be rotated.
+    """
+    global summarization_pipe, summarization_on_gpu, model_vram_usage
+
+    if not Config.ENABLE_MODEL_ROTATION:
+        return True  # Model stays on GPU if rotation disabled
+
+    with model_rotation_lock:
+        if not summarization_on_gpu:
+            return True  # Already on CPU
+
+        log("Restoring models after summarization...", "MODEL")
+        start_time = time.time()
+
+        try:
+            # Move summarization back to CPU (translation model stays on GPU)
+            if summarization_pipe is not None:
+                log("  Moving summarization model to CPU...", "MODEL")
+                summarization_pipe.model.to("cpu")
+                summarization_pipe.device = torch.device("cpu")
+
+            # Clear CUDA cache to release memory
+            torch.cuda.empty_cache()
+            model_vram_usage["summarization"] = 0
+
+            summarization_on_gpu = False
+            elapsed = time.time() - start_time
+            vram_after = torch.cuda.memory_allocated(0) / 1024**3
+            log(f"Restore complete in {elapsed:.1f}s, VRAM: {vram_after:.2f} GB", "MODEL")
+            return True
+
+        except Exception as e:
+            log(f"Error restoring models: {e}", "MODEL")
+            import traceback
+            traceback.print_exc()
+            return False
 
 
 def audio_callback(in_data, frame_count, time_info, status):
     """Callback for audio stream"""
-    if Config.DEBUG and status:
-        print(f"[DEBUG] audio_callback status: {status}")
-
     if is_listening and in_data:
         # Convert bytes to numpy array
         audio_data = np.frombuffer(in_data, dtype=np.int16).astype(np.float32) / 32768.0
-        if Config.DEBUG and len(audio_data) > 0:
-            level = np.abs(audio_data).mean()
         audio_queue.put(audio_data)
     return (in_data, pyaudio.paContinue)
 
@@ -304,10 +707,384 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
+def generate_summary(previous_overview, new_transcript, time_range="", minutes_since_start=0):
+    """Generate a structured summary using summarization chaining.
+
+    Args:
+        previous_overview: The overview from the last summary (for context/continuity)
+        new_transcript: New transcript segments since the last summary
+        time_range: Time range of the full meeting
+        minutes_since_start: How long the meeting has been going
+    """
+    global current_summary, last_summary_time, all_meeting_segments, summarization_started_at
+
+    if summarization_pipe is None:
+        return None
+
+    # Track when summarization started (for UI feedback)
+    summarization_started_at = time.time()
+
+    # Model rotation: Wait for any in-progress transcription to finish, then load summarization to GPU
+    rotation_enabled = Config.ENABLE_MODEL_ROTATION
+    if rotation_enabled:
+        # Acquire transcription lock to ensure no transcription is running
+        # This blocks until any in-progress transcription completes
+        log("Waiting for transcription lock...", "SUMMARY")
+        transcription_lock.acquire()
+        log("Transcription lock acquired, loading summarization to GPU...", "SUMMARY")
+        load_summarization_to_gpu()
+
+    try:
+        # Build context section based on whether we have previous overview
+        if previous_overview:
+            context_section = f"""PREVIOUS MEETING SUMMARY (what was discussed before):
+{previous_overview}
+
+---
+
+NEW DISCUSSION (since last summary - analyze this carefully):
+{new_transcript}"""
+        else:
+            # First summary - no previous context
+            context_section = f"""MEETING TRANSCRIPT (first summary):
+{new_transcript}"""
+
+        # Build the prompt for recent discussion summary only (Llama 3.2 format)
+        # Full meeting overview is now handled manually via Claude
+        prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You summarize recent meeting discussion. Output ONLY valid JSON. Never mention speaker names/numbers.<|eot_id|><|start_header_id|>user<|end_header_id|>
+Meeting: {minutes_since_start} min total. Time range: {time_range}
+
+{context_section}
+
+Output JSON:
+{{"recent_details": ["point 1", "point 2", "point 3", ...]}}
+
+Rules:
+- Exactly 5 CONCISE bullet points about the RECENT discussion
+- Keep each point short but specific: include key names, numbers, facts
+- Focus on what was just discussed, not the whole meeting<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+"""
+
+        # Generate summary (no token limit - let model decide)
+        result = summarization_pipe(
+            prompt,
+            do_sample=False,
+            return_full_text=False,
+        )
+
+        generated_text = result[0]["generated_text"].strip()
+        log(f"Raw LLM output: {generated_text[:300]}...", "SUMMARY")
+
+        # Parse the JSON response
+        import json
+        import re
+        # Try to extract JSON from the response
+        json_start = generated_text.find("{")
+        json_end = generated_text.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            json_str = generated_text[json_start:json_end]
+
+            # Try to repair truncated/malformed JSON
+            try:
+                summary_data = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                log(f"JSON parse error: {e}, attempting repair...", "SUMMARY")
+
+                # Try multiple repair strategies
+                repaired = False
+
+                # Strategy 1: Fix unescaped quotes inside strings
+                # Replace problematic characters that break JSON
+                json_str_clean = json_str.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+
+                # Strategy 2: Truncate at the error position and close brackets
+                error_pos = e.pos if hasattr(e, 'pos') else len(json_str) // 2
+
+                # Try parsing up to the error, find last complete item
+                truncated = json_str_clean[:error_pos]
+                # Find last complete string (ends with ", or "])
+                last_complete = max(
+                    truncated.rfind('",'),
+                    truncated.rfind('"]'),
+                    truncated.rfind('" ,'),
+                    truncated.rfind('" ]')
+                )
+
+                if last_complete > 0:
+                    truncated = truncated[:last_complete + 2]
+                    # Close any open brackets
+                    open_brackets = truncated.count('[') - truncated.count(']')
+                    open_braces = truncated.count('{') - truncated.count('}')
+                    truncated = truncated.rstrip().rstrip(',')
+                    truncated += ']' * open_brackets + '}' * open_braces
+
+                    try:
+                        summary_data = json.loads(truncated)
+                        log(f"Repaired JSON by truncating at pos {last_complete}", "SUMMARY")
+                        repaired = True
+                    except json.JSONDecodeError:
+                        pass
+
+                # Strategy 3: Original bracket-closing approach
+                if not repaired:
+                    open_brackets = json_str_clean.count('[') - json_str_clean.count(']')
+                    open_braces = json_str_clean.count('{') - json_str_clean.count('}')
+
+                    # Remove trailing incomplete strings
+                    if json_str_clean.rstrip().endswith('"') or json_str_clean.rstrip().endswith("'"):
+                        json_str_clean = re.sub(r',\s*"[^"]*$', '', json_str_clean)
+                        json_str_clean = re.sub(r',\s*\'[^\']*$', '', json_str_clean)
+
+                    json_str_clean = json_str_clean.rstrip().rstrip(',')
+                    json_str_clean += ']' * open_brackets + '}' * open_braces
+
+                    log(f"Repaired JSON (added {open_brackets} ] and {open_braces} }})", "SUMMARY")
+                    summary_data = json.loads(json_str_clean)
+
+            with summary_lock:
+                # Update recent details (detailed view of last ~5 min)
+                # Support both old field name (recent_bullets) and new (recent_details)
+                current_summary["recent_bullets"] = summary_data.get("recent_details", summary_data.get("recent_bullets", []))
+
+                # Update timeline sections (chronological with time ranges)
+                # Support both old field name (overview_sections) and new (timeline)
+                timeline = summary_data.get("timeline", summary_data.get("overview_sections", []))
+                # Convert timeline format to overview_sections format for UI compatibility
+                current_summary["overview_sections"] = []
+                for item in timeline:
+                    if isinstance(item, dict):
+                        # New format: {title, content} -> convert to {title, bullets}
+                        if "content" in item:
+                            current_summary["overview_sections"].append({
+                                "title": item.get("title", ""),
+                                "content": item.get("content", "")  # Keep as content for paragraph display
+                            })
+                        else:
+                            # Old format: {title, bullets}
+                            current_summary["overview_sections"].append(item)
+
+                current_summary["last_updated"] = time.time()
+                current_summary["segments_summarized"] = len(all_meeting_segments)
+                current_summary["time_range"] = time_range
+
+            log(f"Generated: {len(current_summary['recent_bullets'])} details, {len(current_summary['overview_sections'])} timeline sections", "SUMMARY")
+            return current_summary
+        else:
+            log(f"Could not parse JSON from response: {generated_text[:300]}", "SUMMARY")
+            return None
+
+    except Exception as e:
+        log(f"Error generating summary: {e}", "SUMMARY")
+        import traceback
+        traceback.print_exc()
+        return None
+
+    finally:
+        # Clear summarization timestamp (UI feedback)
+        # Note: summarization_started_at is already declared global at function start
+        summarization_started_at = None
+        # Model rotation: unload summarization to CPU and release transcription lock
+        if rotation_enabled:
+            unload_summarization_to_cpu()
+            transcription_lock.release()
+            log("Transcription lock released", "SUMMARY")
+
+
+def check_and_generate_summary():
+    """Check if it's time to schedule a summary (called after each transcription completes)"""
+    global last_summary_time, summary_pending
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        return
+
+    if summarization_paused:
+        return  # Kill switch is active
+
+    current_time = time.time()
+
+    # Check if it's time for a summary (transcript file must exist)
+    if (current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
+            and TRANSCRIPT_FILE and TRANSCRIPT_FILE.exists()
+            and not summary_pending):
+        # Mark summary as pending - it will run after current transcription completes
+        summary_pending = True
+        log("Summary scheduled - will generate after current processing completes", "SUMMARY")
+
+
+def run_pending_summary():
+    """Actually run the summary generation.
+
+    Strategy: Read last 5 minutes of transcript directly from file.
+    """
+    global last_summary_time, last_summary_segment_count, all_meeting_segments, meeting_start_time, summary_pending, previous_overview_text
+
+    if not summary_pending:
+        return
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        summary_pending = False
+        return
+
+    if summarization_paused:
+        summary_pending = False
+        return  # Kill switch is active
+
+    # Read last 5 minutes directly from transcript file
+    import re
+    from datetime import datetime
+
+    current_time = time.time()
+    five_minutes_ago = current_time - 300
+
+    recent_lines = []
+    first_timestamp_str = None
+    last_timestamp_str = None
+
+    if TRANSCRIPT_FILE and TRANSCRIPT_FILE.exists():
+        try:
+            with open(TRANSCRIPT_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # Parse: [2025-12-01 19:56:33] [0.00s-11.00s] Text...
+                    match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)', line)
+                    if match:
+                        timestamp_str = match.group(1)
+                        text = match.group(2)
+
+                        # Track first timestamp for time range
+                        if first_timestamp_str is None:
+                            first_timestamp_str = timestamp_str
+
+                        # Parse timestamp to check if within last 5 min
+                        try:
+                            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                            unix_time = dt.timestamp()
+
+                            if unix_time >= five_minutes_ago:
+                                recent_lines.append(f"[{timestamp_str}] {text}")
+                                last_timestamp_str = timestamp_str
+                        except ValueError:
+                            pass
+        except Exception as e:
+            log(f"Error reading transcript file: {e}", "SUMMARY")
+            summary_pending = False
+            return
+
+    if len(recent_lines) == 0:
+        log("No transcript content in last 10 minutes", "SUMMARY")
+        summary_pending = False
+        return
+
+    new_transcript_text = "\n".join(recent_lines)
+
+    # Get time range from what we read
+    time_range = f"{first_timestamp_str} - {last_timestamp_str}" if first_timestamp_str and last_timestamp_str else ""
+
+    # Calculate minutes since meeting start (use first timestamp from file)
+    minutes_since_start = 0
+    if first_timestamp_str:
+        try:
+            first_dt = datetime.strptime(first_timestamp_str, "%Y-%m-%d %H:%M:%S")
+            minutes_since_start = int((current_time - first_dt.timestamp()) / 60)
+        except ValueError:
+            pass
+
+    # Only summarize if we have content
+    if len(new_transcript_text) > 50:
+        log(f"Generating summary: {len(recent_lines)} lines in last 10min from transcript file", "SUMMARY")
+        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars recent, {minutes_since_start}min total", "SUMMARY")
+
+        # Generate in background thread to not block
+        def generate_and_emit():
+            global last_summary_time, last_summary_segment_count, summary_pending, previous_overview_text
+            try:
+                summary = generate_summary(previous_overview_text, new_transcript_text, time_range, minutes_since_start)
+                if summary:
+                    last_summary_time = time.time()
+                    last_summary_segment_count = len(all_meeting_segments)
+
+                    # Store the overview text for next iteration (summarization chaining)
+                    overview_lines = []
+                    for section in summary.get("overview_sections", []):
+                        overview_lines.append(f"## {section.get('title', 'Topic')}")
+                        for bullet in section.get("bullets", []):
+                            overview_lines.append(f"- {bullet}")
+                    previous_overview_text = "\n".join(overview_lines)
+
+                    # Emit original summary to admin room
+                    socketio.emit('summary_update', summary, room='admin')
+
+                    # Translate and emit to each language room
+                    for lang_code in active_language_viewers:
+                        if active_language_viewers[lang_code] > 0:
+                            # Translate summary for this language
+                            translated_summary = translate_summary(summary, lang_code)
+                            socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+            finally:
+                summary_pending = False
+
+        summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
+        summary_thread.start()
+    else:
+        summary_pending = False
+
+
+def translate_summary(summary, target_lang, source_lang="en"):
+    """Translate a summary object to target language"""
+    if target_lang == source_lang:
+        return summary
+
+    try:
+        translated_summary = {
+            "recent_bullets": [],
+            "overview_sections": [],
+            "last_updated": summary.get("last_updated"),
+            "segments_summarized": summary.get("segments_summarized", 0),
+            "time_range": summary.get("time_range", "")  # Don't translate timestamps
+        }
+
+        # Translate recent bullets
+        for bullet in summary.get("recent_bullets", []):
+            translated_bullet = translate_text(bullet, source_lang, target_lang)
+            translated_summary["recent_bullets"].append(translated_bullet)
+
+        # Translate overview sections (title + content or bullets)
+        for section in summary.get("overview_sections", []):
+            translated_section = {
+                "title": translate_text(section.get("title", ""), source_lang, target_lang),
+            }
+            # Handle new paragraph format (content) or old bullet format
+            if "content" in section:
+                translated_section["content"] = translate_text(section.get("content", ""), source_lang, target_lang)
+            elif "bullets" in section:
+                translated_section["bullets"] = []
+                for bullet in section.get("bullets", []):
+                    translated_section["bullets"].append(
+                        translate_text(bullet, source_lang, target_lang)
+                    )
+            translated_summary["overview_sections"].append(translated_section)
+
+        return translated_summary
+    except Exception as e:
+        print(f"[SUMMARY] Error translating summary to {target_lang}: {e}")
+        return summary  # Return original if translation fails
+
+
 @torch.inference_mode()
 def translate_text(text, source_lang, target_lang):
     """Translate text using M2M100"""
     if source_lang == target_lang:
+        return text
+
+    # Ensure text is a string
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
+
+    if not text.strip():
         return text
 
     try:
@@ -394,33 +1171,26 @@ def perform_speaker_diarization(audio_data, sample_rate):
 @torch.inference_mode()
 def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation with speaker diarization"""
-    global is_processing
+    global is_processing, all_meeting_segments
+
+    # Acquire transcription lock - this ensures we don't run while summarization is on GPU
+    # If summarization is waiting for the lock, we'll wait here until it's done
+    if Config.ENABLE_MODEL_ROTATION:
+        if summarization_on_gpu:
+            log("Waiting for summarization to complete...", "TRANSCRIBE")
+        transcription_lock.acquire()
 
     try:
+        # Timestamp for logging and transcript file
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        if Config.DEBUG:
-            print(f"\n[DEBUG] {timestamp} transcribe_and_translate called")
-            print(f"[DEBUG] Audio data shape: {audio_data.shape}")
-            print(f"[DEBUG] Audio duration: {audio_duration:.2f}s")
-            print(f"[DEBUG] Audio min: {audio_data.min():.4f}, max: {audio_data.max():.4f}, mean: {audio_data.mean():.4f}")
-            if Config.DEVICE == "cuda":
-                print(f"[GPU MEMORY] Start: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
         # Perform speaker diarization first (if enabled)
         speaker_segments = None
         if Config.ENABLE_DIARIZATION:
-            print(f"[{timestamp}] Performing speaker diarization...")
+            log("Performing speaker diarization...", "DIARIZE")
             speaker_segments = perform_speaker_diarization(audio_data, SAMPLE_RATE)
-        else:
-            print(f"[{timestamp}] Speaker diarization disabled - skipping")
-
-        if Config.DEBUG:
-            print(f"[DEBUG] Speaker segments: {speaker_segments}")
 
         # Transcribe with timestamps
-        if Config.DEBUG:
-            print(f"[DEBUG] Starting Whisper transcription...")
         result = transcription_pipe(audio_data)
 
         # Extract full transcript and chunks IMMEDIATELY to avoid keeping reference to result
@@ -445,11 +1215,6 @@ def transcribe_and_translate(audio_data, audio_duration):
         # Clear CUDA cache to release unused memory
         if Config.DEVICE == "cuda":
             torch.cuda.empty_cache()
-
-        if Config.DEBUG:
-            print(f"[DEBUG] Transcription complete: {len(full_transcript)} chars, {len(chunks)} chunks")
-            if Config.DEVICE == "cuda":
-                print(f"[GPU MEMORY] After Whisper: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
 
         if not full_transcript:
             is_processing = False
@@ -495,7 +1260,6 @@ def transcribe_and_translate(audio_data, audio_duration):
                     speaker_mapping[original_id] = f"SPEAKER_{speaker_counter:02d}"
                     speaker_counter += 1
 
-            print(f"[DEBUG] Speaker mapping: {speaker_mapping}")
 
             # Extract all words with timestamps from chunks
             all_words = []
@@ -513,8 +1277,6 @@ def transcribe_and_translate(audio_data, audio_duration):
                             "end": word_end
                         })
 
-            if Config.DEBUG:
-                print(f"[DEBUG] Extracted {len(all_words)} words from Whisper")
 
             # Assign each word to a speaker segment based on overlap
             words_with_speakers = []
@@ -631,6 +1393,28 @@ def transcribe_and_translate(audio_data, audio_duration):
             for seg in segments_with_speakers:
                 f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['text']}\n")
 
+        # Accumulate segments for summarization (add timestamp for reference)
+        current_unix_time = time.time()
+        for seg in segments_with_speakers:
+            seg_with_time = seg.copy()
+            seg_with_time["timestamp"] = timestamp  # Add human-readable timestamp
+            seg_with_time["unix_time"] = current_unix_time  # Add Unix timestamp for filtering
+            all_meeting_segments.append(seg_with_time)
+
+        # Set meeting start time on first transcription
+        global meeting_start_time
+        if meeting_start_time is None:
+            meeting_start_time = time.time()
+            print(f"[SUMMARY] Meeting started at {timestamp}")
+
+        # Keep all_meeting_segments reasonable (last 500 segments max - roughly 1-2 hours)
+        # With summarization chaining, we only need new segments since last summary
+        if len(all_meeting_segments) > 500:
+            all_meeting_segments[:] = all_meeting_segments[-500:]
+
+        # Check if it's time to generate a summary
+        check_and_generate_summary()
+
         # IMMEDIATELY send transcription to UI (before translations)
         # This makes the UI feel much more responsive
         ws_payload_initial = {
@@ -740,6 +1524,12 @@ def transcribe_and_translate(audio_data, audio_duration):
         traceback.print_exc()
     finally:
         is_processing = False
+        # Release transcription lock if model rotation is enabled
+        if Config.ENABLE_MODEL_ROTATION:
+            transcription_lock.release()
+        # Now that transcription + translation is complete, run any pending summary
+        # This ensures model rotation doesn't interrupt active transcription
+        run_pending_summary()
 
 
 def process_audio():
@@ -853,18 +1643,11 @@ def process_audio():
             should_process = silence_detected or max_length_reached
 
             if should_process:
-                if Config.DEBUG:
-                    print(f"[DEBUG] Processing trigger - silence_detected: {silence_detected}, max_length: {max_length_reached}")
-                    print(f"[DEBUG] Buffer size: {len(buffer)} chunks, silence_counter: {silence_counter}")
-
                 is_processing = True  # Set lock
 
                 audio_data = np.concatenate(buffer, axis=0)
                 buffer = []
                 silence_counter = 0
-
-                if Config.DEBUG:
-                    print(f"[DEBUG] Concatenated audio shape: {audio_data.shape}")
 
                 # Clear the queue BEFORE processing to avoid duplicate audio
                 while not audio_queue.empty():
@@ -884,22 +1667,14 @@ def process_audio():
                 else:
                     audio_mono = audio_float
 
-                if Config.DEBUG:
-                    print(f"[DEBUG] Mono audio shape: {audio_mono.shape}, channels: {num_channels}")
-
                 # Resample from actual_sample_rate to 16000Hz for Whisper
                 if actual_sample_rate != SAMPLE_RATE:
                     audio_resampled = resampy.resample(audio_mono, actual_sample_rate, SAMPLE_RATE)
-                    if Config.DEBUG:
-                        print(f"[DEBUG] Resampled {actual_sample_rate}Hz -> {SAMPLE_RATE}Hz: {audio_resampled.shape}")
                 else:
                     audio_resampled = audio_mono
 
                 # Check average audio level to detect if it's mostly silence
                 avg_audio_level = np.abs(audio_resampled).mean()
-
-                if Config.DEBUG:
-                    print(f"[DEBUG] Average audio level: {avg_audio_level:.4f}, threshold: {Config.MIN_AUDIO_LEVEL}")
 
                 # Skip transcription if audio is too quiet (likely silence/hallucination)
                 if avg_audio_level < Config.MIN_AUDIO_LEVEL:
@@ -991,6 +1766,28 @@ def admin_auth():
         return jsonify({"status": "error", "authenticated": False, "message": "Invalid password"}), 401
 
 
+@app.route("/api/viewer/auth", methods=["POST"])
+def viewer_auth():
+    """Authenticate viewer user with passphrase"""
+    data = request.json
+    password = data.get("password", "")
+
+    if password == Config.VIEWER_PASSWORD:
+        return jsonify({"status": "success", "authenticated": True})
+    else:
+        return jsonify({"status": "error", "authenticated": False, "message": "Invalid passphrase"}), 401
+
+
+@app.route("/api/viewer/password", methods=["GET"])
+def get_viewer_password():
+    """Get the current viewer password (admin only - requires admin password in header)"""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header == Config.ADMIN_PASSWORD:
+        return jsonify({"password": Config.VIEWER_PASSWORD})
+    else:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+
 @app.route("/api/languages", methods=["GET"])
 def get_languages():
     """Get available languages for viewers"""
@@ -1027,6 +1824,17 @@ def get_system_stats():
             "model_vram": model_vram_usage,
             # Dynamic VRAM = total allocated - sum of static model usage
             "vram_dynamic_gb": max(0, vram_allocated - sum(model_vram_usage.values())),
+            # Model names for display
+            "model_names": {
+                "whisper": Config.WHISPER_MODEL,
+                "translation": Config.TRANSLATION_MODEL,
+                "diarization": Config.DIARIZATION_MODEL if Config.ENABLE_DIARIZATION else "disabled",
+                "summarization": Config.SUMMARIZATION_MODEL if Config.ENABLE_SUMMARIZATION else "disabled",
+            },
+            # Model rotation status
+            "summarization_on_gpu": summarization_on_gpu,
+            "summarization_started_at": summarization_started_at,  # Timestamp for UI elapsed time
+            "model_rotation_enabled": Config.ENABLE_MODEL_ROTATION,
         }
     else:
         stats["gpu"] = None
@@ -1056,10 +1864,21 @@ def start_stats_emitter():
     def emit_stats_loop():
         while stats_emitter_running:
             try:
-                # Only emit if there are admin sessions
+                stats = get_system_stats()
+                # Emit full stats to admin sessions
                 if len(admin_sessions) > 0:
-                    stats = get_system_stats()
                     socketio.emit('system_stats', stats, room='admin')
+                # Emit lightweight summarization status to all viewers
+                # This enables the "Generating Summary..." banner
+                if stats.get("gpu") and stats["gpu"].get("summarization_started_at"):
+                    socketio.emit('system_stats', {
+                        "gpu": {
+                            "summarization_started_at": stats["gpu"]["summarization_started_at"]
+                        }
+                    })
+                elif sum(active_language_viewers.values()) > 0:
+                    # Clear banner for viewers when summarization done
+                    socketio.emit('system_stats', {"gpu": {"summarization_started_at": None}})
             except Exception as e:
                 print(f"[STATS] Error emitting stats: {e}")
 
@@ -1084,7 +1903,6 @@ def download_transcript():
 @socketio.on("connect")
 def handle_connect():
     """Handle client connection"""
-    print(f"[DEBUG] Client connected to SocketIO! SID: {request.sid}")
     # Initialize client session
     connected_clients[request.sid] = {
         'role': None,
@@ -1096,7 +1914,6 @@ def handle_connect():
 @socketio.on("disconnect")
 def handle_disconnect():
     """Handle client disconnection"""
-    print(f"[DEBUG] Client disconnected from SocketIO! SID: {request.sid}")
 
     # Clean up client session
     if request.sid in connected_clients:
@@ -1129,13 +1946,27 @@ def handle_admin_authenticate(data):
         admin_sessions.add(request.sid)
         join_room('admin')
         print(f"[ADMIN] Admin authenticated: {request.sid}")
-        emit('admin_authenticated', {'success': True})
+        emit('admin_authenticated', {'success': True, 'viewer_password': Config.VIEWER_PASSWORD})
         # Send current stats
         emit('viewer_stats', active_language_viewers)
         # Send current listening status
         emit('status', {'listening': is_listening})
     else:
         emit('admin_authenticated', {'success': False, 'message': 'Invalid password'})
+
+
+@socketio.on("viewer_authenticate")
+def handle_viewer_authenticate(data):
+    """Authenticate viewer user via WebSocket"""
+    password = data.get("password", "")
+
+    if password == Config.VIEWER_PASSWORD:
+        connected_clients[request.sid]['authenticated'] = True
+        viewer_sessions.add(request.sid)
+        print(f"[VIEWER] Viewer authenticated: {request.sid}")
+        emit('viewer_authenticated', {'success': True})
+    else:
+        emit('viewer_authenticated', {'success': False, 'message': 'Invalid passphrase'})
 
 
 @socketio.on("get_languages")
@@ -1155,6 +1986,12 @@ def handle_join_language_room(data):
     """Handle viewer joining a language-specific room"""
     language = data.get("language")
 
+    # Check if viewer is authenticated
+    if request.sid not in connected_clients or not connected_clients[request.sid].get('authenticated'):
+        emit('error', {'message': 'Authentication required. Please enter the passphrase.'})
+        emit('joined_room', {'language': language, 'success': False, 'reason': 'not_authenticated'})
+        return
+
     if language and language in active_language_viewers:
         # Update client info
         connected_clients[request.sid]['role'] = 'viewer'
@@ -1170,6 +2007,11 @@ def handle_join_language_room(data):
 
         # Broadcast updated stats to admins
         socketio.emit('viewer_stats', active_language_viewers, room='admin')
+
+        # Send current summary to the new viewer
+        with summary_lock:
+            if current_summary["last_updated"]:
+                emit('summary_update', current_summary)
 
         emit('joined_room', {'language': language, 'success': True})
 
@@ -1257,7 +2099,6 @@ def handle_start_listening():
         emit('error', {'message': 'Unauthorized. Admin access required.'})
         return
 
-    print("[DEBUG] handle_start_listening called by admin!")
     start_listening_internal()
 
 
@@ -1291,6 +2132,172 @@ def handle_stop_listening():
     stop_listening_internal()
 
 
+@socketio.on("trigger_summary")
+def handle_trigger_summary():
+    """Manually trigger a summary generation (admin only)"""
+    global last_summary_time, all_meeting_segments, summary_pending, last_summary_segment_count, previous_overview_text
+
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        emit('summary_error', {'message': 'Summarization is not enabled'})
+        return
+
+    if summarization_paused:
+        emit('summary_error', {'message': 'Summarization is paused. Resume it first.'})
+        return
+
+    if len(all_meeting_segments) == 0:
+        emit('summary_error', {'message': 'No transcript content to summarize yet'})
+        return
+
+    if summary_pending:
+        emit('summary_error', {'message': 'Summary already pending, please wait'})
+        return
+
+    # Get NEW segments since last summary (for recent transcript)
+    new_segments = all_meeting_segments[last_summary_segment_count:]
+
+    # Build transcript of NEW segments only (since last summary)
+    new_transcript_lines = []
+    for seg in new_segments:
+        text = seg.get("text", "")
+        ts = seg.get("timestamp", "")
+        new_transcript_lines.append(f"[{ts}] {text}")
+
+    new_transcript_text = "\n".join(new_transcript_lines)
+
+    # Get time range of summarized content
+    first_timestamp = all_meeting_segments[0].get("timestamp", "") if all_meeting_segments else ""
+    last_timestamp = all_meeting_segments[-1].get("timestamp", "") if all_meeting_segments else ""
+    time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
+
+    # Calculate minutes since meeting start
+    current_time = time.time()
+    minutes_since_start = 0
+    if meeting_start_time is not None:
+        minutes_since_start = int((current_time - meeting_start_time) / 60)
+
+    if len(new_transcript_text) < 50 and last_summary_segment_count > 0:
+        emit('summary_error', {'message': 'Not enough new content to summarize (need at least 50 new characters)'})
+        return
+
+    # If currently processing transcription, schedule for after completion
+    if is_processing:
+        print(f"[SUMMARY] Manual trigger - scheduling after current transcription completes...")
+        emit('summary_generating', {'message': 'Waiting for transcription to complete...'})
+        summary_pending = True
+        return
+
+    print(f"[SUMMARY] Manual trigger - generating summary for {len(all_meeting_segments)} total segments, {len(new_segments)} new ({time_range})...")
+    emit('summary_generating', {'message': 'Generating...'})
+
+    # Generate in background thread to not block
+    def generate_and_emit():
+        global last_summary_time, last_summary_segment_count, previous_overview_text
+        summary = generate_summary(previous_overview_text, new_transcript_text, time_range, minutes_since_start)
+        if summary:
+            last_summary_time = time.time()
+            last_summary_segment_count = len(all_meeting_segments)
+
+            # Store the overview text for next iteration (summarization chaining)
+            overview_lines = []
+            for section in summary.get("overview_sections", []):
+                overview_lines.append(f"## {section.get('title', 'Topic')}")
+                for bullet in section.get("bullets", []):
+                    overview_lines.append(f"- {bullet}")
+            previous_overview_text = "\n".join(overview_lines)
+
+            # Emit original summary to admin room
+            socketio.emit('summary_update', summary, room='admin')
+
+            # Translate and emit to each language room
+            for lang_code in active_language_viewers:
+                if active_language_viewers[lang_code] > 0:
+                    translated_summary = translate_summary(summary, lang_code)
+                    socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+        else:
+            socketio.emit('summary_error', {'message': 'Failed to generate summary'}, room='admin')
+
+    summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
+    summary_thread.start()
+
+
+@socketio.on("toggle_summarization")
+def handle_toggle_summarization():
+    """Toggle summarization on/off (admin only) - kill switch for performance issues"""
+    global summarization_paused
+
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        emit('summarization_status', {'enabled': False, 'reason': 'Summarization not configured'})
+        return
+
+    # Toggle the state
+    summarization_paused = not summarization_paused
+    status = "paused" if summarization_paused else "resumed"
+    print(f"[SUMMARY] Summarization {status} by admin")
+
+    # Emit to all admin clients
+    socketio.emit('summarization_status', {
+        'enabled': not summarization_paused,
+        'paused': summarization_paused
+    }, room='admin')
+
+
+@socketio.on("broadcast_manual_summary")
+def handle_broadcast_manual_summary(data):
+    """Broadcast a manually pasted summary (from Claude) to all viewers, translated to their language"""
+    global current_summary
+
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    summary_markdown = data.get('summary_markdown', '')
+    source_lang = data.get('source_lang', 'en')  # Default to English
+    if not summary_markdown:
+        emit('error', {'message': 'No summary provided'})
+        return
+
+    # Store original in current_summary for new viewers
+    with summary_lock:
+        current_summary["manual_overview"] = summary_markdown
+        current_summary["manual_overview_source_lang"] = source_lang
+        current_summary["last_updated"] = time.time()
+
+    log(f"Broadcasting manual summary ({len(summary_markdown)} chars) to viewers", "SUMMARY")
+
+    # Cache translations to avoid re-translating for same language
+    translations_cache = {source_lang: summary_markdown}
+
+    # Send to each viewer in their language
+    for sid, client in connected_clients.items():
+        if client.get('role') == 'viewer':
+            target_lang = client.get('language', source_lang)
+
+            # Get or create translation
+            if target_lang not in translations_cache:
+                log(f"Translating manual summary to {target_lang}", "SUMMARY")
+                translations_cache[target_lang] = translate_text(summary_markdown, source_lang, target_lang)
+
+            socketio.emit('manual_summary_update', {
+                'summary_markdown': translations_cache[target_lang],
+                'timestamp': time.time()
+            }, room=sid)
+
+    # Confirm to admin
+    emit('manual_summary_broadcast', {'success': True, 'languages_sent': list(translations_cache.keys())})
+
+
 if __name__ == "__main__":
     # Check for single instance before doing anything else
     check_single_instance()
@@ -1319,6 +2326,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Interactive startup configuration (password, meeting name, transcript)
+    startup_configuration()
+
     print("Loading configuration...")
     print("Initializing models (this may take a minute)...")
     initialize_models()
@@ -1329,11 +2339,17 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("Polyglot - Real-time Audio Translator")
     print("=" * 60)
+    print(f"\nMeeting: {MEETING_NAME}")
+    print(f"Transcript: {TRANSCRIPT_FILE.name}")
     print(f"\nOpen your browser to: http://localhost:{args.port}")
     print(f"Device: {Config.DEVICE}")
     print(f"Whisper Model: {Config.WHISPER_MODEL}")
     print(f"Translation Model: {Config.TRANSLATION_MODEL}")
     print(f"Target languages: {', '.join([lang['name'] for lang in Config.TARGET_LANGUAGES])}")
+    print(f"\n{'='*60}")
+    print(f"VIEWER PASSPHRASE: {Config.VIEWER_PASSWORD}")
+    print(f"{'='*60}")
+    print("Share this passphrase with viewers to grant them access.")
 
     if args.auto_listen:
         print("\n[AUTO-LISTEN] Will automatically start listening after server starts")

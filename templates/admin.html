@@ -199,6 +199,21 @@
             animation: debugFlash 1s ease-in-out 1;
         }
 
+        @keyframes staleWarning {
+            0%, 100% {
+                color: #ef4444;
+                text-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+            }
+            50% {
+                color: #fca5a5;
+                text-shadow: 0 0 15px rgba(239, 68, 68, 1);
+            }
+        }
+
+        .broadcast-stale {
+            animation: staleWarning 1s ease-in-out infinite;
+        }
+
         .audio-visualizer {
             display: inline-flex;
             align-items: flex-end;
@@ -539,6 +554,13 @@
     <div class="container" id="adminContainer" style="display: none;">
         <header>
             <h1>🌍 Polyglot</h1>
+            <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                <div style="background: rgba(102, 126, 234, 0.2); border: 1px solid rgba(102, 126, 234, 0.4); padding: 8px 16px; border-radius: 10px; display: flex; align-items: center; gap: 10px;">
+                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Viewer Link:</span>
+                    <span id="viewerLink" style="color: #fff; font-family: 'Courier New', monospace; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; background: rgba(0, 0, 0, 0.3); padding: 4px 12px; border-radius: 6px;">Loading...</span>
+                    <button onclick="copyViewerLink()" style="padding: 4px 10px; font-size: 12px; background: rgba(255, 255, 255, 0.2); border: 1px solid rgba(255, 255, 255, 0.3); color: white; cursor: pointer; border-radius: 6px;" title="Copy viewer link">Copy Link</button>
+                </div>
+            </div>
             <div class="controls">
                 <div class="status-indicator">
                     <div id="connectionDot" class="status-dot disconnected"></div>
@@ -653,33 +675,43 @@
             <!-- VRAM Usage Chart -->
             <div style="background: rgba(0, 0, 0, 0.9); color: white; padding: 12px; border-radius: 10px;">
                 <h3 style="margin-bottom: 10px; color: #f59e0b; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>🎮 VRAM Usage</span>
+                    <span>🎮 VRAM Usage <span id="modelRotationStatus" style="display: none; font-size: 11px; color: #f59e0b; margin-left: 6px; background: rgba(245, 158, 11, 0.2); padding: 2px 6px; border-radius: 4px; animation: pulse 1.5s infinite;">Models on CPU</span></span>
                     <span id="vramTotal" style="font-size: 12px; color: rgba(255, 255, 255, 0.8);">-- / -- GB</span>
                 </h3>
                 <div style="display: flex; gap: 12px; align-items: center;">
                     <div style="flex: 1; height: 140px;">
                         <canvas id="vramChart"></canvas>
                     </div>
-                    <div id="vramLegend" style="font-size: 11px; min-width: 120px;">
-                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                            <span style="width: 12px; height: 12px; background: #3b82f6; border-radius: 2px;"></span>
-                            <span>Whisper: <span id="vramWhisper">--</span> GB</span>
+                    <div id="vramLegend" style="font-size: 10px; min-width: 180px;">
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;" title="Whisper model">
+                            <span style="width: 10px; height: 10px; background: #3b82f6; border-radius: 2px; flex-shrink: 0;"></span>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" id="modelWhisperName">Whisper</span>
+                            <span style="color: #3b82f6;"><span id="vramWhisper">--</span>G</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;" title="Translation model">
+                            <span style="width: 10px; height: 10px; background: #10b981; border-radius: 2px; flex-shrink: 0;"></span>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" id="modelTranslationName">Translation</span>
+                            <span style="color: #10b981;"><span id="vramTranslation">--</span>G</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;" title="Diarization model">
+                            <span style="width: 10px; height: 10px; background: #f59e0b; border-radius: 2px; flex-shrink: 0;"></span>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" id="modelDiarizationName">Diarization</span>
+                            <span style="color: #f59e0b;"><span id="vramDiarization">--</span>G</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;" title="Summarization model">
+                            <span style="width: 10px; height: 10px; background: #8b5cf6; border-radius: 2px; flex-shrink: 0;"></span>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" id="modelSummarizationName">Summary</span>
+                            <span style="color: #8b5cf6;"><span id="vramSummarization">--</span>G</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                            <span style="width: 12px; height: 12px; background: #10b981; border-radius: 2px;"></span>
-                            <span>Translation: <span id="vramTranslation">--</span> GB</span>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                            <span style="width: 12px; height: 12px; background: #f59e0b; border-radius: 2px;"></span>
-                            <span>Diarization: <span id="vramDiarization">--</span> GB</span>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                            <span style="width: 12px; height: 12px; background: #ef4444; border-radius: 2px;"></span>
-                            <span>Dynamic: <span id="vramDynamic">--</span> GB</span>
+                            <span style="width: 10px; height: 10px; background: #ef4444; border-radius: 2px; flex-shrink: 0;"></span>
+                            <span style="flex: 1;">Dynamic</span>
+                            <span style="color: #ef4444;"><span id="vramDynamic">--</span>G</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 6px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 4px; margin-top: 4px;">
-                            <span style="width: 12px; height: 12px; background: #374151; border-radius: 2px;"></span>
-                            <span>Free: <span id="vramFree">--</span> GB</span>
+                            <span style="width: 10px; height: 10px; background: #374151; border-radius: 2px; flex-shrink: 0;"></span>
+                            <span style="flex: 1;">Free</span>
+                            <span style="color: #6b7280;"><span id="vramFree">--</span>G</span>
                         </div>
                     </div>
                 </div>
@@ -704,20 +736,104 @@
 
         </div>
 
-        <!-- Transcript Display -->
-        <div class="panel" style="display: flex;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h2 style="margin: 0;">📝 Transcript</h2>
-                <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
-                    Lag: <span id="adminLagSeconds">0</span>s
+        <!-- Summarization Banner -->
+        <div id="summarizationBanner" style="display: none; background: linear-gradient(135deg, rgba(236, 72, 153, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%); border: 2px solid rgba(236, 72, 153, 0.6); border-radius: 12px; padding: 12px 20px; margin-bottom: 8px; animation: pulse 2s infinite;">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+                <div style="font-size: 24px; animation: spin 2s linear infinite;">⏳</div>
+                <div style="color: white; font-weight: 600; font-size: 16px;">
+                    Generating Summary... <span id="summarizationElapsed" style="color: #f59e0b;">0s</span>
+                </div>
+                <div style="font-size: 12px; color: rgba(255, 255, 255, 0.7);">
+                    (Transcription paused)
                 </div>
             </div>
-            <div id="transcriptContent" class="translation-content" style="font-size: 18px; line-height: 1.8;">
-                <div class="empty-state">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                    </svg>
-                    <p>Waiting for transcription...</p>
+        </div>
+        <style>
+            @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+        </style>
+
+        <!-- Transcript and Summary - 50/50 Split Layout -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1; min-height: 0;">
+            <!-- Left Panel: Transcript -->
+            <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
+                    <h2 style="margin: 0;">📝 Transcript</h2>
+                    <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
+                        Lag: <span id="adminLagSeconds">0</span>s
+                    </div>
+                </div>
+                <div id="transcriptContent" class="translation-content" style="font-size: 16px; line-height: 1.7; flex: 1; overflow-y: auto;">
+                    <div class="empty-state">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <p>Waiting for transcription...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Live Summary -->
+            <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%; background: rgba(236, 72, 153, 0.05); border: 1px solid rgba(236, 72, 153, 0.2);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
+                    <h2 style="margin: 0; color: #ec4899;">📋 Live Summary</h2>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button id="toggleSummarizationBtn" onclick="toggleSummarization()" style="padding: 8px 12px; font-size: 11px; background: rgba(34, 197, 94, 0.2); border: 1px solid #22c55e; color: #22c55e; cursor: pointer; border-radius: 8px; font-weight: 600; transition: all 0.2s;">● Active</button>
+                        <button id="triggerSummaryBtn" onclick="triggerManualSummary()" style="padding: 8px 16px; font-size: 12px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); border: none; color: white; cursor: pointer; border-radius: 8px; font-weight: 600; box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);">Generate Now</button>
+                    </div>
+                </div>
+                <div id="summaryContent" style="flex: 1; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column;">
+                    <div id="summaryStatus" style="color: #9ca3af; text-align: center; padding: 40px 20px;">
+                        <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">📋</div>
+                        <div style="margin-bottom: 8px; font-size: 16px;">Waiting for content...</div>
+                        <div style="font-size: 12px; opacity: 0.7;">Summary will be generated automatically every minute,<br>or click "Generate Now"</div>
+                    </div>
+                    <div id="summaryData" style="display: none; flex: 1; display: flex; flex-direction: column; overflow-y: auto;">
+                        <!-- Recent Discussion Section (Top - Bullet points about last 5 min) -->
+                        <div style="margin-bottom: 16px;">
+                            <div style="color: #ec4899; font-weight: 600; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 14px;">🔍</span> Recent Discussion (Last 5 min)
+                            </div>
+                            <ul id="recentBullets" style="background: rgba(236, 72, 153, 0.1); border-left: 4px solid #ec4899; padding: 12px 14px 12px 30px; border-radius: 8px; line-height: 1.6; font-size: 13px; margin: 0; list-style-type: disc;">
+                                <li style="color: #6b7280;">Waiting for content...</li>
+                            </ul>
+                        </div>
+                        <!-- Manual Summary Input (Bottom - paste Claude summary here) -->
+                        <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+                            <div style="color: #ec4899; font-weight: 600; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; justify-content: space-between;">
+                                <span style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 14px;">📝</span> Meeting Summary (Paste from Claude)
+                                </span>
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <select id="summarySourceLang" style="padding: 3px 6px; font-size: 10px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: white;">
+                                        <option value="en">EN</option>
+                                        <option value="fr">FR</option>
+                                        <option value="es">ES</option>
+                                        <option value="de">DE</option>
+                                        <option value="sv">SV</option>
+                                    </select>
+                                    <button onclick="broadcastManualSummary()" style="padding: 4px 10px; font-size: 10px; background: linear-gradient(135deg, #ec4899, #be185d); border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 600;">Broadcast</button>
+                                </div>
+                            </div>
+                            <textarea id="manualSummaryInput" placeholder="Paste your Claude-generated meeting summary here in markdown format...
+
+Example:
+## Main Topics
+- Topic 1: Description
+- Topic 2: Description
+
+**Key Points:**
+- Important point 1
+- Important point 2" style="flex: 1; max-height: 400px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(236, 72, 153, 0.3); border-radius: 8px; padding: 10px; color: white; font-family: monospace; font-size: 12px; resize: none; line-height: 1.5; overflow-y: auto;"></textarea>
+                        </div>
+                        <div style="margin-top: 12px; font-size: 11px; color: #6b7280; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                            <span>Time range: <span id="summaryTimeRange" style="color: #ec4899;">--</span></span>
+                            <span>Auto-summary: <span id="summaryLastUpdated">--</span></span>
+                            <span>Last broadcast: <span id="lastBroadcastTime" style="color: #22c55e;">Never</span></span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -806,6 +922,7 @@
             vramWhisper: [],
             vramTranslation: [],
             vramDiarization: [],
+            vramSummarization: [],
             vramDynamic: [],
             cpu: [],
             ram: []
@@ -859,6 +976,30 @@
             window.location.href = '/api/admin/transcript';
         }
 
+        // Copy viewer link to clipboard
+        let currentViewerPassword = '';
+
+        function copyViewerLink() {
+            const link = `${window.location.origin}/viewer?p=${currentViewerPassword}`;
+            navigator.clipboard.writeText(link).then(() => {
+                // Brief visual feedback
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.style.background = 'rgba(16, 185, 129, 0.4)';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = 'rgba(255, 255, 255, 0.2)';
+                }, 1500);
+            });
+        }
+
+        function updateViewerLink(password) {
+            currentViewerPassword = password;
+            const link = `${window.location.origin}/viewer?p=${password}`;
+            document.getElementById('viewerLink').textContent = link;
+        }
+
         // Toggle viewer stats panel
         function toggleViewerStats() {
             const panel = document.getElementById('viewerStatsPanel');
@@ -898,6 +1039,16 @@
                             data: [],
                             borderColor: '#f59e0b',
                             backgroundColor: 'rgba(245, 158, 11, 0.3)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 1,
+                        },
+                        {
+                            label: 'Summarization',
+                            data: [],
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.3)',
                             fill: true,
                             tension: 0.3,
                             pointRadius: 0,
@@ -1074,22 +1225,84 @@
                 document.getElementById('vramTotal').textContent =
                     gpu.vram_allocated_gb.toFixed(2) + ' / ' + gpu.vram_total_gb.toFixed(2) + ' GB';
 
-                // Update legend values
-                document.getElementById('vramWhisper').textContent = gpu.model_vram.whisper.toFixed(2);
-                document.getElementById('vramTranslation').textContent = gpu.model_vram.translation.toFixed(2);
-                document.getElementById('vramDiarization').textContent = gpu.model_vram.diarization.toFixed(2);
-                document.getElementById('vramDynamic').textContent = gpu.vram_dynamic_gb.toFixed(2);
-                document.getElementById('vramFree').textContent = (gpu.vram_total_gb - gpu.vram_allocated_gb).toFixed(2);
+                // Update legend values based on current model locations
+                // summarization_on_gpu: true when summarization model is on GPU (translation is on CPU)
+                const summarizationOnGpu = gpu.summarization_on_gpu === true;
+                const summarizationStartedAt = gpu.summarization_started_at;
 
-                // Add VRAM data to history
+                // Update summarization banner
+                const banner = document.getElementById('summarizationBanner');
+                if (summarizationStartedAt) {
+                    const elapsedSec = Math.floor(Date.now() / 1000 - summarizationStartedAt);
+                    document.getElementById('summarizationElapsed').textContent = elapsedSec + 's';
+                    banner.style.display = 'block';
+                } else {
+                    banner.style.display = 'none';
+                }
+
+                document.getElementById('vramWhisper').textContent = gpu.model_vram.whisper.toFixed(1);
+                // Translation is on CPU when summarization is on GPU (model rotation)
+                document.getElementById('vramTranslation').textContent = gpu.model_vram.translation.toFixed(1);
+                document.getElementById('vramDiarization').textContent = gpu.model_vram.diarization.toFixed(1);
+                // Show summarization VRAM when on GPU
+                document.getElementById('vramSummarization').textContent = (gpu.model_vram.summarization || 0).toFixed(1);
+                document.getElementById('vramDynamic').textContent = gpu.vram_dynamic_gb.toFixed(1);
+                document.getElementById('vramFree').textContent = (gpu.vram_total_gb - gpu.vram_allocated_gb).toFixed(1);
+
+                // Update model names and handle model rotation status
+                if (gpu.model_names) {
+                    const whisperEl = document.getElementById('modelWhisperName');
+                    const translationEl = document.getElementById('modelTranslationName');
+                    const diarizationEl = document.getElementById('modelDiarizationName');
+                    const summarizationEl = document.getElementById('modelSummarizationName');
+                    const rotationStatusEl = document.getElementById('modelRotationStatus');
+
+                    const offloadedColor = '#6b7280'; // Gray for models on CPU
+
+                    // Show rotation status when summarization is on GPU
+                    if (gpu.model_rotation_enabled) {
+                        rotationStatusEl.style.display = summarizationOnGpu ? 'inline' : 'none';
+                    } else {
+                        rotationStatusEl.style.display = 'none';
+                    }
+
+                    // Whisper always on GPU
+                    const whisperName = gpu.model_names.whisper || 'Whisper';
+                    whisperEl.textContent = whisperName;
+                    whisperEl.parentElement.title = whisperName;
+                    whisperEl.style.color = '';
+
+                    // Translation: on CPU when summarization is on GPU
+                    const translationName = gpu.model_names.translation?.split('/').pop() || 'Translation';
+                    const translationOnCpu = summarizationOnGpu && gpu.model_rotation_enabled;
+                    translationEl.textContent = translationOnCpu ? translationName + ' (CPU)' : translationName;
+                    translationEl.parentElement.title = (gpu.model_names.translation || 'Translation') + (translationOnCpu ? ' (on CPU during summarization)' : '');
+                    translationEl.style.color = translationOnCpu ? offloadedColor : '';
+
+                    // Diarization always on GPU
+                    const diarizationName = gpu.model_names.diarization?.split('/').pop() || 'Diarization';
+                    diarizationEl.textContent = diarizationName;
+                    diarizationEl.parentElement.title = gpu.model_names.diarization || 'Diarization';
+                    diarizationEl.style.color = '';
+
+                    // Summarization: on GPU only during summary generation
+                    const summaryName = gpu.model_names.summarization?.split('/').pop() || 'Summary';
+                    summarizationEl.textContent = summarizationOnGpu ? summaryName : summaryName + ' (idle)';
+                    summarizationEl.parentElement.title = (gpu.model_names.summarization || 'Summary') + (summarizationOnGpu ? ' (running on GPU)' : ' (idle on CPU)');
+                    summarizationEl.style.color = summarizationOnGpu ? '' : offloadedColor;
+                }
+
+                // Add VRAM data to history - use actual values from model_vram_usage
                 historyData.vramWhisper.push(gpu.model_vram.whisper);
                 historyData.vramTranslation.push(gpu.model_vram.translation);
                 historyData.vramDiarization.push(gpu.model_vram.diarization);
+                historyData.vramSummarization.push(gpu.model_vram.summarization || 0);
                 historyData.vramDynamic.push(gpu.vram_dynamic_gb);
                 if (historyData.vramWhisper.length > MAX_HISTORY_POINTS) {
                     historyData.vramWhisper.shift();
                     historyData.vramTranslation.shift();
                     historyData.vramDiarization.shift();
+                    historyData.vramSummarization.shift();
                     historyData.vramDynamic.shift();
                 }
 
@@ -1099,7 +1312,8 @@
                     vramChart.data.datasets[0].data = [...historyData.vramWhisper];
                     vramChart.data.datasets[1].data = [...historyData.vramTranslation];
                     vramChart.data.datasets[2].data = [...historyData.vramDiarization];
-                    vramChart.data.datasets[3].data = [...historyData.vramDynamic];
+                    vramChart.data.datasets[3].data = [...historyData.vramSummarization];
+                    vramChart.data.datasets[4].data = [...historyData.vramDynamic];
 
                     // Dynamically set max Y based on total VRAM
                     vramChart.options.scales.y.max = Math.ceil(gpu.vram_total_gb);
@@ -1148,6 +1362,11 @@
                 document.getElementById('adminLoginOverlay').style.display = 'none';
                 document.getElementById('adminContainer').style.display = 'block';
                 console.log('Admin authenticated successfully');
+
+                // Display viewer link with password
+                if (data.viewer_password) {
+                    updateViewerLink(data.viewer_password);
+                }
             } else {
                 document.getElementById('loginError').style.display = 'block';
                 document.getElementById('adminPasswordInput').value = '';
@@ -1163,6 +1382,235 @@
         socket.on('system_stats', (stats) => {
             updateSystemStats(stats);
         });
+
+        // Handle summary updates
+        socket.on('summary_update', (summary) => {
+            updateSummaryDisplay(summary);
+        });
+
+        socket.on('summary_generating', (data) => {
+            const btn = document.getElementById('triggerSummaryBtn');
+            btn.textContent = 'Generating...';
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+        });
+
+        socket.on('summary_error', (data) => {
+            const btn = document.getElementById('triggerSummaryBtn');
+            btn.textContent = 'Generate Now';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+
+            // Show error briefly
+            const statusEl = document.getElementById('summaryStatus');
+            statusEl.innerHTML = `<div style="color: #ef4444;">${data.message}</div>`;
+            statusEl.style.display = 'block';
+            document.getElementById('summaryData').style.display = 'none';
+
+            setTimeout(() => {
+                statusEl.innerHTML = `
+                    <div style="margin-bottom: 8px;">Waiting for content...</div>
+                    <div style="font-size: 10px; opacity: 0.7;">Summary will be generated automatically every minute, or click "Generate Now"</div>
+                `;
+            }, 3000);
+        });
+
+        // Trigger manual summary generation
+        function triggerManualSummary() {
+            socket.emit('trigger_summary');
+        }
+
+        // Broadcast manual summary (pasted from Claude)
+        function broadcastManualSummary() {
+            const summaryText = document.getElementById('manualSummaryInput').value.trim();
+            const sourceLang = document.getElementById('summarySourceLang').value;
+            if (!summaryText) {
+                alert('Please paste a summary first');
+                return;
+            }
+            socket.emit('broadcast_manual_summary', {
+                summary_markdown: summaryText,
+                source_lang: sourceLang
+            });
+        }
+
+        // Track last broadcast time
+        let lastBroadcastTimestamp = null;
+
+        // Handle confirmation of manual summary broadcast
+        socket.on('manual_summary_broadcast', (data) => {
+            if (data.success) {
+                // Flash the button green briefly
+                const btn = document.querySelector('button[onclick="broadcastManualSummary()"]');
+                btn.style.background = '#22c55e';
+                btn.textContent = 'Sent!';
+                setTimeout(() => {
+                    btn.style.background = 'linear-gradient(135deg, #ec4899, #be185d)';
+                    btn.textContent = 'Broadcast';
+                }, 2000);
+
+                // Update last broadcast timestamp
+                lastBroadcastTimestamp = Date.now();
+                updateLastBroadcastDisplay();
+            }
+        });
+
+        // Update the last broadcast time display
+        function updateLastBroadcastDisplay() {
+            const el = document.getElementById('lastBroadcastTime');
+            if (!lastBroadcastTimestamp) {
+                el.textContent = 'Never';
+                el.className = '';
+                el.style.color = '#6b7280';
+                return;
+            }
+
+            const now = Date.now();
+            const diffMs = now - lastBroadcastTimestamp;
+            const diffMin = Math.floor(diffMs / 60000);
+            const diffSec = Math.floor((diffMs % 60000) / 1000);
+
+            // Format the absolute time
+            const broadcastTime = new Date(lastBroadcastTimestamp);
+            const timeStr = broadcastTime.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+
+            // Format relative time
+            let relativeStr;
+            if (diffMin < 1) {
+                relativeStr = `${diffSec}s ago`;
+            } else if (diffMin < 60) {
+                relativeStr = `${diffMin}m ago`;
+            } else {
+                const diffHours = Math.floor(diffMin / 60);
+                relativeStr = `${diffHours}h ${diffMin % 60}m ago`;
+            }
+
+            el.textContent = `${timeStr} (${relativeStr})`;
+
+            // Check if stale (> 15 minutes)
+            if (diffMin >= 15) {
+                el.className = 'broadcast-stale';
+                el.style.color = '';  // Let animation control color
+            } else {
+                el.className = '';
+                el.style.color = '#22c55e';
+            }
+        }
+
+        // Update the display every 10 seconds
+        setInterval(updateLastBroadcastDisplay, 10000);
+
+        // Toggle summarization on/off (kill switch)
+        let summarizationActive = true;
+        function toggleSummarization() {
+            socket.emit('toggle_summarization');
+        }
+
+        // Handle summarization status updates
+        socket.on('summarization_status', (data) => {
+            summarizationActive = data.enabled;
+            updateSummarizationButton();
+        });
+
+        function updateSummarizationButton() {
+            const btn = document.getElementById('toggleSummarizationBtn');
+            const genBtn = document.getElementById('triggerSummaryBtn');
+            if (summarizationActive) {
+                btn.innerHTML = '● Active';
+                btn.style.background = 'rgba(34, 197, 94, 0.2)';
+                btn.style.borderColor = '#22c55e';
+                btn.style.color = '#22c55e';
+                genBtn.disabled = false;
+                genBtn.style.opacity = '1';
+            } else {
+                btn.innerHTML = '○ Paused';
+                btn.style.background = 'rgba(239, 68, 68, 0.2)';
+                btn.style.borderColor = '#ef4444';
+                btn.style.color = '#ef4444';
+                genBtn.disabled = true;
+                genBtn.style.opacity = '0.5';
+            }
+        }
+
+        // Update summary display
+        function updateSummaryDisplay(summary) {
+            const btn = document.getElementById('triggerSummaryBtn');
+            btn.textContent = 'Generate Now';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+
+            // Hide status, show data
+            document.getElementById('summaryStatus').style.display = 'none';
+            document.getElementById('summaryData').style.display = 'flex';
+
+            // Update recent bullets (detailed bullet points about recent discussion)
+            const recentBulletsEl = document.getElementById('recentBullets');
+            const recentBullets = summary.recent_bullets || [];
+            if (recentBullets.length > 0) {
+                recentBulletsEl.innerHTML = recentBullets.map(bullet =>
+                    `<li style="margin-bottom: 6px; color: rgba(255, 255, 255, 0.9);">${bullet}</li>`
+                ).join('');
+            } else {
+                recentBulletsEl.innerHTML = '<li style="color: #6b7280;">No recent discussion yet...</li>';
+            }
+
+            // Update overview sections (full meeting grouped by topic)
+            const overviewEl = document.getElementById('overviewSections');
+            const sections = summary.overview_sections || [];
+            if (sections.length > 0) {
+                overviewEl.innerHTML = '';
+                sections.forEach((section, index) => {
+                    const sectionDiv = document.createElement('div');
+                    sectionDiv.style.cssText = 'margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.1);';
+                    if (index === sections.length - 1) {
+                        sectionDiv.style.borderBottom = 'none';
+                        sectionDiv.style.marginBottom = '0';
+                    }
+
+                    // Section title
+                    const titleDiv = document.createElement('div');
+                    titleDiv.style.cssText = 'font-weight: 600; color: #ec4899; margin-bottom: 8px; font-size: 13px;';
+                    titleDiv.textContent = section.title || 'Topic';
+                    sectionDiv.appendChild(titleDiv);
+
+                    // Section content - support both new paragraph format and old bullets format
+                    if (section.content) {
+                        // New format: paragraph content
+                        const contentDiv = document.createElement('div');
+                        contentDiv.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.5; padding-left: 8px;';
+                        contentDiv.textContent = section.content;
+                        sectionDiv.appendChild(contentDiv);
+                    } else if (section.bullets && section.bullets.length > 0) {
+                        // Old format: bullet list
+                        const bulletsList = document.createElement('ul');
+                        bulletsList.style.cssText = 'margin: 0; padding-left: 20px; list-style-type: disc;';
+                        section.bullets.forEach(bullet => {
+                            const li = document.createElement('li');
+                            li.style.cssText = 'margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.85); line-height: 1.4;';
+                            li.textContent = bullet;
+                            bulletsList.appendChild(li);
+                        });
+                        sectionDiv.appendChild(bulletsList);
+                    }
+
+                    overviewEl.appendChild(sectionDiv);
+                });
+            } else {
+                overviewEl.innerHTML = '<div style="color: #6b7280; text-align: center; padding: 20px; font-size: 12px;">No topics yet...</div>';
+            }
+
+            // Update time range
+            const timeRange = summary.time_range || '--';
+            document.getElementById('summaryTimeRange').textContent = timeRange;
+
+            // Update last updated time
+            const lastUpdated = summary.last_updated ? new Date(summary.last_updated * 1000).toLocaleTimeString() : '--';
+            document.getElementById('summaryLastUpdated').textContent = lastUpdated;
+        }
 
         // Load configuration
         fetch('/api/config')
@@ -1464,28 +1912,28 @@
                 transcriptContent.innerHTML = '';
             }
 
-            // Add segments to transcript
+            // Add segments to transcript (newest at top)
             if (data.segments && data.segments.length > 0 && data.is_initial) {
-                data.segments.forEach(segment => {
-                    const segmentText = `[${timestamp}] ${segment.speaker || 'Speaker'}: ${segment.text}`;
-                    transcriptSegments.push(segmentText);
-                });
+                // Add new segments at the beginning (reverse order so newest appears first)
+                const newSegments = data.segments.map(segment =>
+                    `[${timestamp}] ${segment.speaker || 'Speaker'}: ${segment.text}`
+                ).reverse();
+                transcriptSegments.unshift(...newSegments);
 
-                // Limit transcript size
+                // Limit transcript size (keep newest, remove oldest from end)
                 if (transcriptSegments.length > MAX_TRANSCRIPT_ITEMS) {
-                    transcriptSegments = transcriptSegments.slice(-MAX_TRANSCRIPT_ITEMS);
+                    transcriptSegments = transcriptSegments.slice(0, MAX_TRANSCRIPT_ITEMS);
                 }
 
-                // Render transcript
+                // Render transcript (newest at top, oldest at bottom)
                 transcriptContent.innerHTML = transcriptSegments.map(text => `
                     <div style="margin-bottom: 15px; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; border-left: 3px solid #667eea; color: white;">
                         ${text}
                     </div>
                 `).join('');
 
-                // Auto-scroll to bottom - need to scroll the parent panel
-                const transcriptPanel = transcriptContent.parentElement;
-                transcriptPanel.scrollTop = transcriptPanel.scrollHeight;
+                // Scroll to top to show newest content
+                transcriptContent.scrollTop = 0;
             }
 
             // Old translation panel code removed

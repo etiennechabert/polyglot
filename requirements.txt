@@ -30,3 +30,5 @@ pyannote.core==6.0.1
 numpy==2.3.4
 langdetect==1.0.9
 python-dotenv==1.2.1
+psutil==5.9.8
+tiktoken==0.12.0
