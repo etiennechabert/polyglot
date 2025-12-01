@@ -288,7 +288,7 @@ current_summary = {
 # Previous overview for summarization chaining (model builds on this)
 previous_overview_text = ""  # Formatted text of last overview for context
 summary_lock = threading.Lock()
-last_summary_time = 0
+last_summary_time = time.time()  # Initialize to now so first summary waits for the interval
 last_summary_segment_count = 0  # Track how many segments were in last summary
 all_meeting_segments = []  # FULL meeting transcript (never cleared)
 meeting_start_time = None  # Track when meeting started (first transcription)
@@ -724,10 +724,10 @@ Rules:
 - Focus on what was just discussed, not the whole meeting<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 """
 
-        # Generate summary (reduced tokens since we only need bullets now)
+        # Generate summary
         result = summarization_pipe(
             prompt,
-            max_new_tokens=400,
+            max_new_tokens=800,
             do_sample=False,
             return_full_text=False,
         )
@@ -744,26 +744,62 @@ Rules:
         if json_start >= 0 and json_end > json_start:
             json_str = generated_text[json_start:json_end]
 
-            # Try to repair truncated JSON by closing brackets
+            # Try to repair truncated/malformed JSON
             try:
                 summary_data = json.loads(json_str)
-            except json.JSONDecodeError:
-                # Count open/close brackets and try to fix
-                open_brackets = json_str.count('[') - json_str.count(']')
-                open_braces = json_str.count('{') - json_str.count('}')
+            except json.JSONDecodeError as e:
+                log(f"JSON parse error: {e}, attempting repair...", "SUMMARY")
 
-                # Remove trailing incomplete strings (ends with unclosed quote)
-                if json_str.rstrip().endswith('"') or json_str.rstrip().endswith("'"):
-                    # Find last complete item
-                    json_str = re.sub(r',\s*"[^"]*$', '', json_str)
-                    json_str = re.sub(r',\s*\'[^\']*$', '', json_str)
+                # Try multiple repair strategies
+                repaired = False
 
-                # Close brackets
-                json_str = json_str.rstrip().rstrip(',')
-                json_str += ']' * open_brackets + '}' * open_braces
+                # Strategy 1: Fix unescaped quotes inside strings
+                # Replace problematic characters that break JSON
+                json_str_clean = json_str.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
 
-                log(f"Repaired JSON (added {open_brackets} ] and {open_braces} }})", "SUMMARY")
-                summary_data = json.loads(json_str)
+                # Strategy 2: Truncate at the error position and close brackets
+                error_pos = e.pos if hasattr(e, 'pos') else len(json_str) // 2
+
+                # Try parsing up to the error, find last complete item
+                truncated = json_str_clean[:error_pos]
+                # Find last complete string (ends with ", or "])
+                last_complete = max(
+                    truncated.rfind('",'),
+                    truncated.rfind('"]'),
+                    truncated.rfind('" ,'),
+                    truncated.rfind('" ]')
+                )
+
+                if last_complete > 0:
+                    truncated = truncated[:last_complete + 2]
+                    # Close any open brackets
+                    open_brackets = truncated.count('[') - truncated.count(']')
+                    open_braces = truncated.count('{') - truncated.count('}')
+                    truncated = truncated.rstrip().rstrip(',')
+                    truncated += ']' * open_brackets + '}' * open_braces
+
+                    try:
+                        summary_data = json.loads(truncated)
+                        log(f"Repaired JSON by truncating at pos {last_complete}", "SUMMARY")
+                        repaired = True
+                    except json.JSONDecodeError:
+                        pass
+
+                # Strategy 3: Original bracket-closing approach
+                if not repaired:
+                    open_brackets = json_str_clean.count('[') - json_str_clean.count(']')
+                    open_braces = json_str_clean.count('{') - json_str_clean.count('}')
+
+                    # Remove trailing incomplete strings
+                    if json_str_clean.rstrip().endswith('"') or json_str_clean.rstrip().endswith("'"):
+                        json_str_clean = re.sub(r',\s*"[^"]*$', '', json_str_clean)
+                        json_str_clean = re.sub(r',\s*\'[^\']*$', '', json_str_clean)
+
+                    json_str_clean = json_str_clean.rstrip().rstrip(',')
+                    json_str_clean += ']' * open_brackets + '}' * open_braces
+
+                    log(f"Repaired JSON (added {open_brackets} ] and {open_braces} }})", "SUMMARY")
+                    summary_data = json.loads(json_str_clean)
 
             with summary_lock:
                 # Update recent details (detailed view of last ~5 min)
@@ -860,12 +896,16 @@ def run_pending_summary():
 
     current_time = time.time()
 
-    # Get NEW segments since last summary (for recent transcript)
-    new_segments = all_meeting_segments[last_summary_segment_count:]
+    # Get segments from the last 10 minutes (600 seconds) by timestamp
+    ten_minutes_ago = current_time - 600
+    recent_segments = [
+        seg for seg in all_meeting_segments
+        if seg.get("unix_time", 0) >= ten_minutes_ago
+    ]
 
-    # Build transcript of NEW segments only (since last summary)
+    # Build transcript of last 10 minutes
     new_transcript_lines = []
-    for seg in new_segments:
+    for seg in recent_segments:
         text = seg.get("text", "")
         ts = seg.get("timestamp", "")
         new_transcript_lines.append(f"[{ts}] {text}")
@@ -882,10 +922,10 @@ def run_pending_summary():
     if meeting_start_time is not None:
         minutes_since_start = int((current_time - meeting_start_time) / 60)
 
-    # Only summarize if we have new content
-    if len(new_transcript_text) > 50 or (len(all_meeting_segments) > 0 and last_summary_segment_count == 0):
-        log(f"Generating: {len(all_meeting_segments)} total segments, {len(new_segments)} new", "SUMMARY")
-        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars new, {minutes_since_start}min in", "SUMMARY")
+    # Only summarize if we have content in the last 10 minutes
+    if len(recent_segments) > 0 and len(new_transcript_text) > 50:
+        log(f"Generating: {len(all_meeting_segments)} total segments, {len(recent_segments)} in last 10min", "SUMMARY")
+        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars recent, {minutes_since_start}min in", "SUMMARY")
 
         # Generate in background thread to not block
         def generate_and_emit():
@@ -1276,9 +1316,11 @@ def transcribe_and_translate(audio_data, audio_duration):
                 f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['text']}\n")
 
         # Accumulate segments for summarization (add timestamp for reference)
+        current_unix_time = time.time()
         for seg in segments_with_speakers:
             seg_with_time = seg.copy()
             seg_with_time["timestamp"] = timestamp  # Add human-readable timestamp
+            seg_with_time["unix_time"] = current_unix_time  # Add Unix timestamp for filtering
             all_meeting_segments.append(seg_with_time)
 
         # Set meeting start time on first transcription
