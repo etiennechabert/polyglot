@@ -29,8 +29,8 @@ class Config:
     # Summarization settings
     # Set to False to disable live summary feature
     ENABLE_SUMMARIZATION = os.getenv("ENABLE_SUMMARIZATION", "True").lower() in ("true", "1", "yes")
-    # Generate summary once per minute
-    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "60"))
+    # Generate summary every 5 minutes
+    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "300"))
 
     # Model rotation for summarization (experimental)
     # When enabled, offloads Whisper/Translation/Diarization models to CPU before running summarization
@@ -38,6 +38,9 @@ class Config:
     # Audio recording continues during rotation - transcription is queued and processed after reload
     # WARNING: This adds latency (~10-20s) during model swap
     # Set to True if you have limited VRAM and want to use larger summarization models
+    # When enabled, the summarization model is kept on CPU and only moved to GPU during summary generation.
+    # Transcription models (Whisper, Translation, Diarization) stay on GPU permanently.
+    # This saves ~3GB VRAM when not summarizing.
     ENABLE_MODEL_ROTATION = os.getenv("ENABLE_MODEL_ROTATION", "True").lower() in ("true", "1", "yes")
 
     # Local summarization model
