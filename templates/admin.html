@@ -1168,14 +1168,15 @@
                 document.getElementById('vramTotal').textContent =
                     gpu.vram_allocated_gb.toFixed(2) + ' / ' + gpu.vram_total_gb.toFixed(2) + ' GB';
 
-                // Update legend values (show 0 for offloaded models)
-                const modelsOffloaded = gpu.models_offloaded === true;
-                const summarizationActive = gpu.summarization_active === true;
-                document.getElementById('vramWhisper').textContent = modelsOffloaded ? '0.0' : gpu.model_vram.whisper.toFixed(1);
-                document.getElementById('vramTranslation').textContent = modelsOffloaded ? '0.0' : gpu.model_vram.translation.toFixed(1);
-                document.getElementById('vramDiarization').textContent = modelsOffloaded ? '0.0' : gpu.model_vram.diarization.toFixed(1);
-                // Show summarization VRAM only when actively running
-                document.getElementById('vramSummarization').textContent = summarizationActive ? (gpu.model_vram.summarization || 0).toFixed(1) : '0.0';
+                // Update legend values based on current model locations
+                // summarization_on_gpu: true when summarization model is on GPU (translation is on CPU)
+                const summarizationOnGpu = gpu.summarization_on_gpu === true;
+                document.getElementById('vramWhisper').textContent = gpu.model_vram.whisper.toFixed(1);
+                // Translation is on CPU when summarization is on GPU (model rotation)
+                document.getElementById('vramTranslation').textContent = gpu.model_vram.translation.toFixed(1);
+                document.getElementById('vramDiarization').textContent = gpu.model_vram.diarization.toFixed(1);
+                // Show summarization VRAM when on GPU
+                document.getElementById('vramSummarization').textContent = (gpu.model_vram.summarization || 0).toFixed(1);
                 document.getElementById('vramDynamic').textContent = gpu.vram_dynamic_gb.toFixed(1);
                 document.getElementById('vramFree').textContent = (gpu.vram_total_gb - gpu.vram_allocated_gb).toFixed(1);
 
@@ -1187,50 +1188,46 @@
                     const summarizationEl = document.getElementById('modelSummarizationName');
                     const rotationStatusEl = document.getElementById('modelRotationStatus');
 
-                    // Check if models are offloaded to CPU
-                    const isOffloaded = gpu.models_offloaded === true;
-                    const cpuSuffix = isOffloaded ? ' (CPU)' : '';
-                    const offloadedColor = '#6b7280'; // Gray for offloaded models
+                    const offloadedColor = '#6b7280'; // Gray for models on CPU
 
-                    // Show/hide rotation status indicator
+                    // Show rotation status when summarization is on GPU
                     if (gpu.model_rotation_enabled) {
-                        rotationStatusEl.style.display = isOffloaded ? 'inline' : 'none';
+                        rotationStatusEl.style.display = summarizationOnGpu ? 'inline' : 'none';
                     } else {
                         rotationStatusEl.style.display = 'none';
                     }
 
-                    // Update model names with CPU suffix when offloaded (gray color)
+                    // Whisper always on GPU
                     const whisperName = gpu.model_names.whisper || 'Whisper';
-                    whisperEl.textContent = whisperName + cpuSuffix;
-                    whisperEl.parentElement.title = whisperName + (isOffloaded ? ' (offloaded to CPU)' : '');
-                    whisperEl.style.color = isOffloaded ? offloadedColor : '';
+                    whisperEl.textContent = whisperName;
+                    whisperEl.parentElement.title = whisperName;
+                    whisperEl.style.color = '';
 
+                    // Translation: on CPU when summarization is on GPU
                     const translationName = gpu.model_names.translation?.split('/').pop() || 'Translation';
-                    translationEl.textContent = translationName + cpuSuffix;
-                    translationEl.parentElement.title = (gpu.model_names.translation || 'Translation') + (isOffloaded ? ' (offloaded to CPU)' : '');
-                    translationEl.style.color = isOffloaded ? offloadedColor : '';
+                    const translationOnCpu = summarizationOnGpu && gpu.model_rotation_enabled;
+                    translationEl.textContent = translationOnCpu ? translationName + ' (CPU)' : translationName;
+                    translationEl.parentElement.title = (gpu.model_names.translation || 'Translation') + (translationOnCpu ? ' (on CPU during summarization)' : '');
+                    translationEl.style.color = translationOnCpu ? offloadedColor : '';
 
+                    // Diarization always on GPU
                     const diarizationName = gpu.model_names.diarization?.split('/').pop() || 'Diarization';
-                    diarizationEl.textContent = diarizationName + cpuSuffix;
-                    diarizationEl.parentElement.title = (gpu.model_names.diarization || 'Diarization') + (isOffloaded ? ' (offloaded to CPU)' : '');
-                    diarizationEl.style.color = isOffloaded ? offloadedColor : '';
+                    diarizationEl.textContent = diarizationName;
+                    diarizationEl.parentElement.title = gpu.model_names.diarization || 'Diarization';
+                    diarizationEl.style.color = '';
 
-                    // Summarization: show as active (normal) only when running, gray when idle
+                    // Summarization: on GPU only during summary generation
                     const summaryName = gpu.model_names.summarization?.split('/').pop() || 'Summary';
-                    const isSummarizationActive = gpu.summarization_active === true;
-                    summarizationEl.textContent = isSummarizationActive ? summaryName : summaryName + ' (idle)';
-                    summarizationEl.parentElement.title = (gpu.model_names.summarization || 'Summary') + (isSummarizationActive ? ' (running)' : ' (idle - not using VRAM)');
-                    summarizationEl.style.color = isSummarizationActive ? '' : offloadedColor;
+                    summarizationEl.textContent = summarizationOnGpu ? summaryName : summaryName + ' (idle)';
+                    summarizationEl.parentElement.title = (gpu.model_names.summarization || 'Summary') + (summarizationOnGpu ? ' (running on GPU)' : ' (idle on CPU)');
+                    summarizationEl.style.color = summarizationOnGpu ? '' : offloadedColor;
                 }
 
-                // Add VRAM data to history (show 0 for offloaded/idle models)
-                const isOffloadedForGraph = gpu.models_offloaded === true;
-                const isSummaryActiveForGraph = gpu.summarization_active === true;
-                historyData.vramWhisper.push(isOffloadedForGraph ? 0 : gpu.model_vram.whisper);
-                historyData.vramTranslation.push(isOffloadedForGraph ? 0 : gpu.model_vram.translation);
-                historyData.vramDiarization.push(isOffloadedForGraph ? 0 : gpu.model_vram.diarization);
-                // Show summarization VRAM only when actively running
-                historyData.vramSummarization.push(isSummaryActiveForGraph ? (gpu.model_vram.summarization || 0) : 0);
+                // Add VRAM data to history - use actual values from model_vram_usage
+                historyData.vramWhisper.push(gpu.model_vram.whisper);
+                historyData.vramTranslation.push(gpu.model_vram.translation);
+                historyData.vramDiarization.push(gpu.model_vram.diarization);
+                historyData.vramSummarization.push(gpu.model_vram.summarization || 0);
                 historyData.vramDynamic.push(gpu.vram_dynamic_gb);
                 if (historyData.vramWhisper.length > MAX_HISTORY_POINTS) {
                     historyData.vramWhisper.shift();
