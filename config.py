@@ -45,12 +45,13 @@ class Config:
 
     # Local summarization model
     # Options (sorted by speed, all with 128K context):
-    #   - "microsoft/Phi-3-mini-128k-instruct" (3.8B, ~3GB VRAM, 128K context, FAST) - RECOMMENDED for Windows
-    #   - "microsoft/Phi-3-small-128k-instruct" (7B, ~5GB VRAM, 128K context) - Linux only (requires Triton)
-    #   - "meta-llama/Llama-3.2-3B-Instruct" (3B, ~2.5GB VRAM, 128K context, FAST)
+    #   - "microsoft/Phi-3.5-mini-instruct" (3.8B, ~4GB VRAM, 128K context, FAST) - RECOMMENDED
+    #   - "Qwen/Qwen2.5-3B-Instruct" (3B, ~3GB VRAM, 128K context, FAST)
+    #   - "meta-llama/Llama-3.2-3B-Instruct" (3B, ~2.5GB VRAM, 128K context, GATED - needs approval)
+    #   - "microsoft/Phi-3-mini-128k-instruct" (3.8B, ~7GB VRAM, 128K context)
     #   - "microsoft/Phi-3-medium-128k-instruct" (14B, ~8GB VRAM, 128K context, SLOW but high quality)
     #   - "Qwen/Qwen2.5-7B-Instruct" (7B, ~14GB VRAM, 128K context, SLOW but excellent quality)
-    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "microsoft/Phi-3-mini-128k-instruct")
+    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "microsoft/Phi-3.5-mini-instruct")
 
     # Summarization model context size (in tokens)
     # This should match your chosen model's context window
