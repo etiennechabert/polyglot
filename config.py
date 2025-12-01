@@ -30,12 +30,21 @@ class Config:
     ENABLE_SUMMARIZATION = os.getenv("ENABLE_SUMMARIZATION", "True").lower() in ("true", "1", "yes")
     SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "60"))  # Generate summary once per minute
 
+    # Model rotation for summarization (experimental)
+    # When enabled, offloads Whisper/Translation/Diarization models to CPU before running summarization
+    # This frees up VRAM for larger summarization models, then reloads models after
+    # Audio recording continues during rotation - transcription is queued and processed after reload
+    # WARNING: This adds latency (~10-20s) during model swap
+    # Set to True if you have limited VRAM and want to use larger summarization models
+    ENABLE_MODEL_ROTATION = True
+
     # Local summarization model
     # Options:
-    #   - "microsoft/Phi-3-mini-4k-instruct" (3.8B, ~2GB VRAM, fast, good quality)
-    #   - "Qwen/Qwen2-1.5B-Instruct" (1.5B, ~1.5GB VRAM, very fast)
-    #   - "facebook/bart-large-cnn" (specialized summarization, ~1.5GB VRAM)
-    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "Qwen/Qwen2-1.5B-Instruct")
+    #   - "Qwen/Qwen2-7B-Instruct" (7B, ~5GB VRAM, excellent quality) - RECOMMENDED
+    #   - "Qwen/Qwen2.5-3B-Instruct" (3B, ~2.5GB VRAM, good quality)
+    #   - "Qwen/Qwen2-1.5B-Instruct" (1.5B, ~1.5GB VRAM, very fast, decent quality)
+    #   - "microsoft/Phi-3-mini-4k-instruct" (3.8B, ~3GB VRAM, good quality)
+    SUMMARIZATION_MODEL = os.getenv("SUMMARIZATION_MODEL", "Qwen/Qwen2-7B-Instruct")
 
     # Debug mode - enables detailed logging
     DEBUG = True
