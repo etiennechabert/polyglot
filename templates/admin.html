@@ -540,9 +540,9 @@
             <h1>🌍 Polyglot</h1>
             <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
                 <div style="background: rgba(102, 126, 234, 0.2); border: 1px solid rgba(102, 126, 234, 0.4); padding: 8px 16px; border-radius: 10px; display: flex; align-items: center; gap: 10px;">
-                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Viewer Passphrase:</span>
-                    <span id="viewerPassphrase" style="color: #fff; font-family: 'Courier New', monospace; font-size: 16px; font-weight: 600; letter-spacing: 1px; background: rgba(0, 0, 0, 0.3); padding: 4px 12px; border-radius: 6px;">Loading...</span>
-                    <button onclick="copyPassphrase()" style="padding: 4px 10px; font-size: 12px; background: rgba(255, 255, 255, 0.2); border: 1px solid rgba(255, 255, 255, 0.3); color: white; cursor: pointer; border-radius: 6px;" title="Copy to clipboard">Copy</button>
+                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Viewer Link:</span>
+                    <span id="viewerLink" style="color: #fff; font-family: 'Courier New', monospace; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; background: rgba(0, 0, 0, 0.3); padding: 4px 12px; border-radius: 6px;">Loading...</span>
+                    <button onclick="copyViewerLink()" style="padding: 4px 10px; font-size: 12px; background: rgba(255, 255, 255, 0.2); border: 1px solid rgba(255, 255, 255, 0.3); color: white; cursor: pointer; border-radius: 6px;" title="Copy viewer link">Copy Link</button>
                 </div>
             </div>
             <div class="controls">
@@ -794,10 +794,12 @@
             window.location.href = '/api/admin/transcript';
         }
 
-        // Copy viewer passphrase to clipboard
-        function copyPassphrase() {
-            const passphrase = document.getElementById('viewerPassphrase').textContent;
-            navigator.clipboard.writeText(passphrase).then(() => {
+        // Copy viewer link to clipboard
+        let currentViewerPassword = '';
+
+        function copyViewerLink() {
+            const link = `${window.location.origin}/viewer?p=${currentViewerPassword}`;
+            navigator.clipboard.writeText(link).then(() => {
                 // Brief visual feedback
                 const btn = event.target;
                 const originalText = btn.textContent;
@@ -808,6 +810,12 @@
                     btn.style.background = 'rgba(255, 255, 255, 0.2)';
                 }, 1500);
             });
+        }
+
+        function updateViewerLink(password) {
+            currentViewerPassword = password;
+            const link = `${window.location.origin}/viewer?p=${password}`;
+            document.getElementById('viewerLink').textContent = link;
         }
 
         // Toggle viewer stats panel
@@ -851,12 +859,9 @@
                 document.getElementById('adminContainer').style.display = 'block';
                 console.log('Admin authenticated successfully');
 
-                // Display viewer passphrase if provided
+                // Display viewer link with password
                 if (data.viewer_password) {
-                    const passphraseEl = document.getElementById('viewerPassphrase');
-                    if (passphraseEl) {
-                        passphraseEl.textContent = data.viewer_password;
-                    }
+                    updateViewerLink(data.viewer_password);
                 }
             } else {
                 document.getElementById('loginError').style.display = 'block';

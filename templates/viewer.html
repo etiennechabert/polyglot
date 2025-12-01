@@ -604,12 +604,24 @@
             'it': 'linear-gradient(135deg, #30cfd0 0%, #330867 100%)'
         };
 
-        // Check for stored authentication
+        // Check for stored authentication or URL parameter
         document.addEventListener('DOMContentLoaded', () => {
-            const storedAuth = sessionStorage.getItem('viewer_authenticated');
-            if (storedAuth === 'true') {
-                isAuthenticated = true;
-                showLanguageSelection();
+            // Check for password in URL (e.g., /viewer?p=word_word_word)
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlPassword = urlParams.get('p');
+
+            if (urlPassword) {
+                // Auto-authenticate with URL password
+                socket.emit('viewer_authenticate', { password: urlPassword });
+                // Clean URL without reloading (remove password from visible URL for security)
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else {
+                // Check for stored authentication
+                const storedAuth = sessionStorage.getItem('viewer_authenticated');
+                if (storedAuth === 'true') {
+                    isAuthenticated = true;
+                    showLanguageSelection();
+                }
             }
 
             // Allow Enter key to submit passphrase
