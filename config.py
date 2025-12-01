@@ -29,8 +29,8 @@ class Config:
     # Summarization settings
     # Set to False to disable live summary feature
     ENABLE_SUMMARIZATION = os.getenv("ENABLE_SUMMARIZATION", "True").lower() in ("true", "1", "yes")
-    # Generate summary every 5 minutes
-    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "300"))
+    # Generate summary every 2.5 minutes
+    SUMMARY_INTERVAL_SECONDS = int(os.getenv("SUMMARY_INTERVAL_SECONDS", "150"))
 
     # Model rotation for summarization (experimental)
     # When enabled, offloads Whisper/Translation/Diarization models to CPU before running summarization
@@ -133,11 +133,11 @@ class Config:
     # Main European languages (available for viewers)
     TARGET_LANGUAGES = [
         {"code": "en", "name": "English"},
-        {"code": "es", "name": "Spanish"},
-        {"code": "fr", "name": "French"},
-        {"code": "pt", "name": "Portuguese"},
+       # {"code": "es", "name": "Spanish"},
+       # {"code": "fr", "name": "French"},
+       # {"code": "pt", "name": "Portuguese"},
         {"code": "de", "name": "German"},
-        {"code": "it", "name": "Italian"},
+       # {"code": "it", "name": "Italian"},
     ]
 
     # Admin languages - subset of TARGET_LANGUAGES to display in admin view
