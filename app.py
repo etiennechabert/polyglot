@@ -279,7 +279,7 @@ viewer_sessions = set()
 
 # Live summarization state
 current_summary = {
-    "recent_bullets": [],  # Bullet points about recent ~10 min discussion
+    "recent_bullets": [],  # Bullet points about recent ~5 min discussion
     "overview_sections": [],  # Sections covering full meeting: [{title: "...", bullets: [...]}]
     "last_updated": None,
     "segments_summarized": 0,
@@ -293,6 +293,65 @@ last_summary_segment_count = 0  # Track how many segments were in last summary
 all_meeting_segments = []  # FULL meeting transcript (never cleared)
 meeting_start_time = None  # Track when meeting started (first transcription)
 summary_pending = False  # Track if a summary generation is waiting
+
+
+def load_transcript_segments(transcript_path):
+    """Load existing transcript file into all_meeting_segments for summarization.
+
+    Parses lines like: [2025-12-01 19:56:33] [0.00s-11.00s] Text here...
+    """
+    global all_meeting_segments, meeting_start_time
+    import re
+    from datetime import datetime
+
+    if not transcript_path or not transcript_path.exists():
+        return 0
+
+    segments_loaded = 0
+    first_unix_time = None
+
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Parse: [2025-12-01 19:56:33] [0.00s-11.00s] Text...
+                match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)', line)
+                if match:
+                    timestamp_str = match.group(1)
+                    text = match.group(2)
+
+                    # Parse the timestamp to get unix time
+                    try:
+                        dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                        unix_time = dt.timestamp()
+                        if first_unix_time is None:
+                            first_unix_time = unix_time
+                    except ValueError:
+                        unix_time = time.time()
+
+                    # Add segment
+                    all_meeting_segments.append({
+                        "text": text,
+                        "timestamp": timestamp_str,
+                        "unix_time": unix_time,
+                        "start": 0,
+                        "end": 0
+                    })
+                    segments_loaded += 1
+
+        # Set meeting start time from first segment
+        if first_unix_time is not None:
+            meeting_start_time = first_unix_time
+
+        print(f"[TRANSCRIPT] Loaded {segments_loaded} segments from existing transcript")
+
+    except Exception as e:
+        print(f"[TRANSCRIPT] Error loading transcript: {e}")
+
+    return segments_loaded
 
 # VRAM tracking for admin stats display
 model_vram_usage = {
@@ -541,11 +600,11 @@ transcription_lock = threading.Lock()  # Ensures transcription completes before 
 def load_summarization_to_gpu():
     """Move Summarization model from CPU to GPU for inference.
 
-    Also moves translation model to CPU to free VRAM.
     Called before generating a summary. Transcription must be paused while
     summarization model is on GPU to avoid VRAM overflow.
+    Note: Translation model stays on GPU - it should not be rotated.
     """
-    global summarization_pipe, summarization_on_gpu, model_vram_usage, translation_model
+    global summarization_pipe, summarization_on_gpu, model_vram_usage
 
     if not Config.ENABLE_MODEL_ROTATION:
         return True  # Model already on GPU if rotation disabled
@@ -558,16 +617,9 @@ def load_summarization_to_gpu():
         start_time = time.time()
 
         try:
-            # First, move translation model to CPU to free VRAM
-            if translation_model is not None and Config.DEVICE == "cuda":
-                log("  Moving translation model to CPU...", "MODEL")
-                translation_model.to("cpu")
-                model_vram_usage["translation"] = 0
-                torch.cuda.empty_cache()
-
             vram_before = torch.cuda.memory_allocated(0) / 1024**3
 
-            # Then load summarization to GPU
+            # Load summarization to GPU (translation model stays on GPU)
             if summarization_pipe is not None:
                 log("  Moving summarization model to GPU...", "MODEL")
                 summarization_pipe.model.to("cuda")
@@ -592,10 +644,10 @@ def load_summarization_to_gpu():
 def unload_summarization_to_cpu():
     """Move Summarization model from GPU back to CPU after summary generation.
 
-    Also restores translation model back to GPU.
     Called after generating a summary. Frees GPU memory for transcription models.
+    Note: Translation model stays on GPU - it should not be rotated.
     """
-    global summarization_pipe, summarization_on_gpu, model_vram_usage, translation_model
+    global summarization_pipe, summarization_on_gpu, model_vram_usage
 
     if not Config.ENABLE_MODEL_ROTATION:
         return True  # Model stays on GPU if rotation disabled
@@ -608,7 +660,7 @@ def unload_summarization_to_cpu():
         start_time = time.time()
 
         try:
-            # First, move summarization back to CPU
+            # Move summarization back to CPU (translation model stays on GPU)
             if summarization_pipe is not None:
                 log("  Moving summarization model to CPU...", "MODEL")
                 summarization_pipe.model.to("cpu")
@@ -617,15 +669,6 @@ def unload_summarization_to_cpu():
             # Clear CUDA cache to release memory
             torch.cuda.empty_cache()
             model_vram_usage["summarization"] = 0
-
-            # Then restore translation model to GPU
-            if translation_model is not None and Config.DEVICE == "cuda":
-                log("  Moving translation model back to GPU...", "MODEL")
-                vram_before = torch.cuda.memory_allocated(0) / 1024**3
-                translation_model.to("cuda")
-                torch.cuda.empty_cache()
-                vram_after_translation = torch.cuda.memory_allocated(0) / 1024**3
-                model_vram_usage["translation"] = vram_after_translation - vram_before
 
             summarization_on_gpu = False
             elapsed = time.time() - start_time
@@ -715,19 +758,17 @@ Meeting: {minutes_since_start} min total. Time range: {time_range}
 {context_section}
 
 Output JSON:
-{{"recent_details": ["detailed point 1", "detailed point 2", "detailed point 3", "detailed point 4"]}}
+{{"recent_details": ["point 1", "point 2", "point 3", ...]}}
 
 Rules:
-- 4-6 DETAILED bullet points about the RECENT discussion only
-- Be specific: include names, numbers, key facts mentioned
-- Write full sentences, not brief phrases
+- Exactly 5 CONCISE bullet points about the RECENT discussion
+- Keep each point short but specific: include key names, numbers, facts
 - Focus on what was just discussed, not the whole meeting<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 """
 
-        # Generate summary
+        # Generate summary (no token limit - let model decide)
         result = summarization_pipe(
             prompt,
-            max_new_tokens=800,
             do_sample=False,
             return_full_text=False,
         )
@@ -852,7 +893,7 @@ Rules:
 
 def check_and_generate_summary():
     """Check if it's time to schedule a summary (called after each transcription completes)"""
-    global last_summary_time, all_meeting_segments, meeting_start_time, summary_pending
+    global last_summary_time, summary_pending
 
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
         return
@@ -862,9 +903,9 @@ def check_and_generate_summary():
 
     current_time = time.time()
 
-    # Check if it's time for a summary
+    # Check if it's time for a summary (transcript file must exist)
     if (current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
-            and len(all_meeting_segments) > 0
+            and TRANSCRIPT_FILE and TRANSCRIPT_FILE.exists()
             and not summary_pending):
         # Mark summary as pending - it will run after current transcription completes
         summary_pending = True
@@ -872,10 +913,9 @@ def check_and_generate_summary():
 
 
 def run_pending_summary():
-    """Actually run the summary generation using summarization chaining.
+    """Actually run the summary generation.
 
-    Strategy: Feed model the PREVIOUS overview + NEW transcript since last summary.
-    This allows the model to build on its previous summary rather than re-processing everything.
+    Strategy: Read last 5 minutes of transcript directly from file.
     """
     global last_summary_time, last_summary_segment_count, all_meeting_segments, meeting_start_time, summary_pending, previous_overview_text
 
@@ -890,42 +930,73 @@ def run_pending_summary():
         summary_pending = False
         return  # Kill switch is active
 
-    if len(all_meeting_segments) == 0:
+    # Read last 5 minutes directly from transcript file
+    import re
+    from datetime import datetime
+
+    current_time = time.time()
+    five_minutes_ago = current_time - 300
+
+    recent_lines = []
+    first_timestamp_str = None
+    last_timestamp_str = None
+
+    if TRANSCRIPT_FILE and TRANSCRIPT_FILE.exists():
+        try:
+            with open(TRANSCRIPT_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # Parse: [2025-12-01 19:56:33] [0.00s-11.00s] Text...
+                    match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)', line)
+                    if match:
+                        timestamp_str = match.group(1)
+                        text = match.group(2)
+
+                        # Track first timestamp for time range
+                        if first_timestamp_str is None:
+                            first_timestamp_str = timestamp_str
+
+                        # Parse timestamp to check if within last 5 min
+                        try:
+                            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                            unix_time = dt.timestamp()
+
+                            if unix_time >= five_minutes_ago:
+                                recent_lines.append(f"[{timestamp_str}] {text}")
+                                last_timestamp_str = timestamp_str
+                        except ValueError:
+                            pass
+        except Exception as e:
+            log(f"Error reading transcript file: {e}", "SUMMARY")
+            summary_pending = False
+            return
+
+    if len(recent_lines) == 0:
+        log("No transcript content in last 10 minutes", "SUMMARY")
         summary_pending = False
         return
 
-    current_time = time.time()
+    new_transcript_text = "\n".join(recent_lines)
 
-    # Get segments from the last 10 minutes (600 seconds) by timestamp
-    ten_minutes_ago = current_time - 600
-    recent_segments = [
-        seg for seg in all_meeting_segments
-        if seg.get("unix_time", 0) >= ten_minutes_ago
-    ]
+    # Get time range from what we read
+    time_range = f"{first_timestamp_str} - {last_timestamp_str}" if first_timestamp_str and last_timestamp_str else ""
 
-    # Build transcript of last 10 minutes
-    new_transcript_lines = []
-    for seg in recent_segments:
-        text = seg.get("text", "")
-        ts = seg.get("timestamp", "")
-        new_transcript_lines.append(f"[{ts}] {text}")
-
-    new_transcript_text = "\n".join(new_transcript_lines)
-
-    # Get time range
-    first_timestamp = all_meeting_segments[0].get("timestamp", "") if all_meeting_segments else ""
-    last_timestamp = all_meeting_segments[-1].get("timestamp", "") if all_meeting_segments else ""
-    time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
-
-    # Calculate minutes since meeting start
+    # Calculate minutes since meeting start (use first timestamp from file)
     minutes_since_start = 0
-    if meeting_start_time is not None:
-        minutes_since_start = int((current_time - meeting_start_time) / 60)
+    if first_timestamp_str:
+        try:
+            first_dt = datetime.strptime(first_timestamp_str, "%Y-%m-%d %H:%M:%S")
+            minutes_since_start = int((current_time - first_dt.timestamp()) / 60)
+        except ValueError:
+            pass
 
-    # Only summarize if we have content in the last 10 minutes
-    if len(recent_segments) > 0 and len(new_transcript_text) > 50:
-        log(f"Generating: {len(all_meeting_segments)} total segments, {len(recent_segments)} in last 10min", "SUMMARY")
-        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars recent, {minutes_since_start}min in", "SUMMARY")
+    # Only summarize if we have content
+    if len(new_transcript_text) > 50:
+        log(f"Generating summary: {len(recent_lines)} lines in last 10min from transcript file", "SUMMARY")
+        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars recent, {minutes_since_start}min total", "SUMMARY")
 
         # Generate in background thread to not block
         def generate_and_emit():
@@ -1007,6 +1078,13 @@ def translate_summary(summary, target_lang, source_lang="en"):
 def translate_text(text, source_lang, target_lang):
     """Translate text using M2M100"""
     if source_lang == target_lang:
+        return text
+
+    # Ensure text is a string
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
+
+    if not text.strip():
         return text
 
     try:
