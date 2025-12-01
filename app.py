@@ -35,6 +35,124 @@ def generate_viewer_password():
     words = random.sample(PASSPHRASE_WORDS, 3)
     return "_".join(words)
 
+
+def load_saved_password():
+    """Load previously saved viewer password from file"""
+    password_file = Path("viewer_password.txt")
+    if password_file.exists():
+        try:
+            return password_file.read_text().strip()
+        except Exception:
+            return None
+    return None
+
+
+def save_password(password):
+    """Save viewer password to file for reuse"""
+    password_file = Path("viewer_password.txt")
+    password_file.write_text(password)
+
+
+def get_existing_transcripts():
+    """Get list of existing transcript files"""
+    transcripts_dir = Path("transcripts")
+    if not transcripts_dir.exists():
+        return []
+    return sorted(transcripts_dir.glob("*.txt"), key=lambda x: x.stat().st_mtime, reverse=True)
+
+
+def sanitize_filename(name):
+    """Convert meeting name to safe filename"""
+    # Replace spaces with underscores, remove special characters
+    safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '' for c in name)
+    safe_name = safe_name.replace(' ', '_')
+    return safe_name[:50]  # Limit length
+
+
+def startup_configuration():
+    """Interactive startup configuration for meeting and password"""
+    global TRANSCRIPT_FILE, MEETING_NAME
+
+    print("\n" + "=" * 60)
+    print("  POLYGLOT - Startup Configuration")
+    print("=" * 60)
+
+    # --- Password Configuration ---
+    saved_password = load_saved_password()
+    if saved_password:
+        print(f"\n[PASSWORD] Previous viewer password found: {saved_password}")
+        while True:
+            choice = input("  Reuse this password? (Y/n): ").strip().lower()
+            if choice in ('', 'y', 'yes'):
+                Config.VIEWER_PASSWORD = saved_password
+                print(f"  -> Using saved password: {saved_password}")
+                break
+            elif choice in ('n', 'no'):
+                Config.VIEWER_PASSWORD = generate_viewer_password()
+                save_password(Config.VIEWER_PASSWORD)
+                print(f"  -> Generated new password: {Config.VIEWER_PASSWORD}")
+                break
+            else:
+                print("  Please enter 'y' or 'n'")
+    else:
+        Config.VIEWER_PASSWORD = generate_viewer_password()
+        save_password(Config.VIEWER_PASSWORD)
+        print(f"\n[PASSWORD] Generated new viewer password: {Config.VIEWER_PASSWORD}")
+
+    # --- Meeting Name Configuration ---
+    print(f"\n[MEETING] Enter a name for this meeting/session")
+    meeting_name = input("  Meeting name (or press Enter for timestamp): ").strip()
+
+    if meeting_name:
+        MEETING_NAME = meeting_name
+        safe_name = sanitize_filename(meeting_name)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        transcript_filename = f"{safe_name}_{timestamp}.txt"
+    else:
+        MEETING_NAME = f"Meeting {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        transcript_filename = f"transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    # --- Transcript File Configuration ---
+    existing_transcripts = get_existing_transcripts()
+
+    if existing_transcripts:
+        print(f"\n[TRANSCRIPT] Found {len(existing_transcripts)} existing transcript(s):")
+        print("  0. Create NEW transcript file")
+        for i, tf in enumerate(existing_transcripts[:10], 1):  # Show max 10
+            size_kb = tf.stat().st_size / 1024
+            mod_time = datetime.fromtimestamp(tf.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+            print(f"  {i}. {tf.name} ({size_kb:.1f}KB, {mod_time})")
+
+        while True:
+            choice = input("\n  Select transcript (0 for new, or number to continue): ").strip()
+            if choice == '' or choice == '0':
+                # Create new transcript
+                transcripts_dir = Path("transcripts")
+                transcripts_dir.mkdir(exist_ok=True)
+                TRANSCRIPT_FILE = transcripts_dir / transcript_filename
+                print(f"  -> Creating new transcript: {TRANSCRIPT_FILE.name}")
+                break
+            elif choice.isdigit() and 1 <= int(choice) <= min(10, len(existing_transcripts)):
+                TRANSCRIPT_FILE = existing_transcripts[int(choice) - 1]
+                print(f"  -> Continuing transcript: {TRANSCRIPT_FILE.name}")
+                # Update meeting name from filename if continuing
+                MEETING_NAME = TRANSCRIPT_FILE.stem.replace('_', ' ')
+                break
+            else:
+                print("  Invalid choice, please try again")
+    else:
+        # No existing transcripts, create new
+        transcripts_dir = Path("transcripts")
+        transcripts_dir.mkdir(exist_ok=True)
+        TRANSCRIPT_FILE = transcripts_dir / transcript_filename
+        print(f"\n[TRANSCRIPT] Creating new transcript: {TRANSCRIPT_FILE.name}")
+
+    print("\n" + "-" * 60)
+    print(f"  Meeting: {MEETING_NAME}")
+    print(f"  Password: {Config.VIEWER_PASSWORD}")
+    print(f"  Transcript: {TRANSCRIPT_FILE.name}")
+    print("-" * 60 + "\n")
+
 import numpy as np
 import psutil
 import pyaudiowpatch as pyaudio
@@ -108,10 +226,14 @@ from pyannote.audio import Pipeline as DiarizationPipeline
 SAMPLE_RATE = Config.SAMPLE_RATE
 CHUNK_SIZE = Config.CHUNK_SIZE
 
-# Create timestamped transcript file
+# Transcript and password storage paths
 TRANSCRIPTS_DIR = Path("transcripts")
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
-TRANSCRIPT_FILE = TRANSCRIPTS_DIR / f"transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+PASSWORD_FILE = Path("viewer_password.txt")
+
+# Will be set during startup configuration
+TRANSCRIPT_FILE = None
+MEETING_NAME = None
 
 # Dynamic audio detection thresholds (can be changed via API)
 audio_thresholds = Config.get_audio_thresholds()
@@ -149,7 +271,8 @@ current_summary = {
     "key_points": [],  # List of main discussion points
     "current_topic": "",  # Current discussion topic (more detailed)
     "last_updated": None,
-    "segments_summarized": 0
+    "segments_summarized": 0,
+    "time_range": ""  # Time range of summarized content (e.g., "14:30:15 - 14:35:22")
 }
 summary_lock = threading.Lock()
 last_summary_time = 0
@@ -160,6 +283,7 @@ model_vram_usage = {
     "whisper": 0,
     "translation": 0,
     "diarization": 0,
+    "summarization": 0,
 }
 gpu_total_memory = 0  # Total GPU memory in GB
 
@@ -316,6 +440,9 @@ def initialize_models():
         current_model += 1
         print(f"[{current_model}/{model_count}] Loading Summarization Model: {Config.SUMMARIZATION_MODEL}")
 
+        # Track VRAM before loading
+        pre_summarization_mem = torch.cuda.memory_allocated(0) / 1024**3 if device == "cuda" else 0
+
         try:
             summarization_pipe = pipeline(
                 "text-generation",
@@ -327,8 +454,11 @@ def initialize_models():
 
             if device == "cuda":
                 total_mem = torch.cuda.memory_allocated(0) / 1024**3
+                summarization_mem = total_mem - pre_summarization_mem
+                model_vram_usage["summarization"] = summarization_mem
                 print(f"      [OK] Loaded successfully")
                 print(f"      GPU Memory: {total_mem:.2f} GB allocated (total)")
+                print(f"      Model Size: ~{summarization_mem:.2f} GB")
             else:
                 print(f"      [OK] Loaded successfully (CPU)")
             print()
@@ -344,6 +474,101 @@ def initialize_models():
         print(f"Total GPU Memory Used: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         print(f"GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB")
     print("=" * 80 + "\n")
+
+
+# Model rotation state tracking
+models_offloaded = False
+summarization_active = False  # Track when summarization is actively running
+model_rotation_lock = threading.Lock()
+
+
+def offload_models_to_cpu():
+    """Offload Whisper, Translation, and Diarization models to CPU to free VRAM for summarization"""
+    global transcription_pipe, translation_model, diarization_pipeline, models_offloaded, model_vram_usage
+
+    if not Config.ENABLE_MODEL_ROTATION:
+        return False
+
+    with model_rotation_lock:
+        if models_offloaded:
+            return True  # Already offloaded
+
+        print("[MODEL ROTATION] Offloading models to CPU...")
+        start_time = time.time()
+
+        try:
+            # Offload Whisper model
+            if transcription_pipe is not None:
+                transcription_pipe.model.to("cpu")
+                print("  - Whisper model moved to CPU")
+
+            # Offload Translation model
+            if translation_model is not None:
+                translation_model.to("cpu")
+                print("  - Translation model moved to CPU")
+
+            # Offload Diarization pipeline
+            if diarization_pipeline is not None:
+                diarization_pipeline.to(torch.device("cpu"))
+                print("  - Diarization pipeline moved to CPU")
+
+            # Clear CUDA cache
+            torch.cuda.empty_cache()
+
+            models_offloaded = True
+            elapsed = time.time() - start_time
+            vram_after = torch.cuda.memory_allocated(0) / 1024**3
+            print(f"[MODEL ROTATION] Models offloaded in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB")
+            return True
+
+        except Exception as e:
+            print(f"[MODEL ROTATION] Error offloading models: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+def reload_models_to_gpu():
+    """Reload Whisper, Translation, and Diarization models back to GPU"""
+    global transcription_pipe, translation_model, diarization_pipeline, models_offloaded, model_vram_usage
+
+    if not Config.ENABLE_MODEL_ROTATION:
+        return False
+
+    with model_rotation_lock:
+        if not models_offloaded:
+            return True  # Already on GPU
+
+        print("[MODEL ROTATION] Reloading models to GPU...")
+        start_time = time.time()
+
+        try:
+            # Reload Whisper model
+            if transcription_pipe is not None:
+                transcription_pipe.model.to("cuda")
+                print("  - Whisper model moved to GPU")
+
+            # Reload Translation model
+            if translation_model is not None:
+                translation_model.to("cuda")
+                print("  - Translation model moved to GPU")
+
+            # Reload Diarization pipeline
+            if diarization_pipeline is not None:
+                diarization_pipeline.to(torch.device("cuda"))
+                print("  - Diarization pipeline moved to GPU")
+
+            models_offloaded = False
+            elapsed = time.time() - start_time
+            vram_after = torch.cuda.memory_allocated(0) / 1024**3
+            print(f"[MODEL ROTATION] Models reloaded in {elapsed:.1f}s, VRAM now: {vram_after:.2f} GB")
+            return True
+
+        except Exception as e:
+            print(f"[MODEL ROTATION] Error reloading models: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
 
 def audio_callback(in_data, frame_count, time_info, status):
@@ -375,12 +600,20 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
-def generate_summary(transcript_text):
+def generate_summary(transcript_text, time_range=""):
     """Generate a structured summary using the local LLM"""
-    global current_summary, last_summary_time, accumulated_segments
+    global current_summary, last_summary_time, accumulated_segments, summarization_active
 
     if summarization_pipe is None:
         return None
+
+    # Model rotation: offload other models to CPU to free VRAM
+    rotation_enabled = Config.ENABLE_MODEL_ROTATION
+    if rotation_enabled:
+        offload_models_to_cpu()
+
+    # Mark summarization as active
+    summarization_active = True
 
     try:
         # Build the prompt for structured summary
@@ -423,6 +656,7 @@ Summarize this meeting transcript:
                 current_summary["current_topic"] = summary_data.get("current_topic", "")
                 current_summary["last_updated"] = time.time()
                 current_summary["segments_summarized"] = len(accumulated_segments)
+                current_summary["time_range"] = time_range
 
             print(f"[SUMMARY] Generated summary with {len(current_summary['key_points'])} key points")
             return current_summary
@@ -435,6 +669,13 @@ Summarize this meeting transcript:
         import traceback
         traceback.print_exc()
         return None
+
+    finally:
+        # Mark summarization as no longer active
+        summarization_active = False
+        # Model rotation: reload models back to GPU
+        if rotation_enabled:
+            reload_models_to_gpu()
 
 
 def check_and_generate_summary():
@@ -450,23 +691,29 @@ def check_and_generate_summary():
     if (current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
             and len(accumulated_segments) > 0):
 
-        # Build transcript from accumulated segments
+        # Build transcript from accumulated segments with timestamps
         transcript_lines = []
         for seg in accumulated_segments:
             speaker = seg.get("speaker", "Speaker")
             text = seg.get("text", "")
-            transcript_lines.append(f"{speaker}: {text}")
+            ts = seg.get("timestamp", "")
+            transcript_lines.append(f"[{ts}] {speaker}: {text}")
 
         transcript_text = "\n".join(transcript_lines)
 
+        # Get time range of summarized content
+        first_timestamp = accumulated_segments[0].get("timestamp", "") if accumulated_segments else ""
+        last_timestamp = accumulated_segments[-1].get("timestamp", "") if accumulated_segments else ""
+        time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
+
         # Only summarize if we have enough content (at least 100 characters)
         if len(transcript_text) > 100:
-            print(f"[SUMMARY] Generating summary for {len(accumulated_segments)} segments...")
+            print(f"[SUMMARY] Generating summary for {len(accumulated_segments)} segments ({time_range})...")
 
             # Generate in background thread to not block
             def generate_and_emit():
                 global last_summary_time
-                summary = generate_summary(transcript_text)
+                summary = generate_summary(transcript_text, time_range)
                 if summary:
                     last_summary_time = time.time()
 
@@ -494,7 +741,8 @@ def translate_summary(summary, target_lang, source_lang="en"):
             "key_points": [],
             "current_topic": "",
             "last_updated": summary.get("last_updated"),
-            "segments_summarized": summary.get("segments_summarized", 0)
+            "segments_summarized": summary.get("segments_summarized", 0),
+            "time_range": summary.get("time_range", "")  # Don't translate timestamps
         }
 
         # Translate each key point
@@ -604,10 +852,22 @@ def perform_speaker_diarization(audio_data, sample_rate):
 @torch.inference_mode()
 def transcribe_and_translate(audio_data, audio_duration):
     """Background thread for transcription and translation with speaker diarization"""
-    global is_processing
+    global is_processing, accumulated_segments
 
     try:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Wait if models are offloaded during model rotation
+        # Audio continues to be captured while we wait
+        if Config.ENABLE_MODEL_ROTATION and models_offloaded:
+            print(f"[{timestamp}] Waiting for model rotation to complete...")
+            wait_start = time.time()
+            while models_offloaded:
+                time.sleep(0.1)  # Check every 100ms
+                if time.time() - wait_start > 60:  # Timeout after 60s
+                    print(f"[{timestamp}] Model rotation timeout - skipping this audio chunk")
+                    return
+            print(f"[{timestamp}] Models ready, resuming transcription (waited {time.time() - wait_start:.1f}s)")
 
         if Config.DEBUG:
             print(f"\n[DEBUG] {timestamp} transcribe_and_translate called")
@@ -841,8 +1101,11 @@ def transcribe_and_translate(audio_data, audio_duration):
             for seg in segments_with_speakers:
                 f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['text']}\n")
 
-        # Accumulate segments for summarization
-        accumulated_segments.extend(segments_with_speakers)
+        # Accumulate segments for summarization (add timestamp for reference)
+        for seg in segments_with_speakers:
+            seg_with_time = seg.copy()
+            seg_with_time["timestamp"] = timestamp  # Add human-readable timestamp
+            accumulated_segments.append(seg_with_time)
         # Keep only last 100 segments to avoid memory bloat
         if len(accumulated_segments) > 100:
             accumulated_segments = accumulated_segments[-100:]
@@ -1268,6 +1531,17 @@ def get_system_stats():
             "model_vram": model_vram_usage,
             # Dynamic VRAM = total allocated - sum of static model usage
             "vram_dynamic_gb": max(0, vram_allocated - sum(model_vram_usage.values())),
+            # Model names for display
+            "model_names": {
+                "whisper": Config.WHISPER_MODEL,
+                "translation": Config.TRANSLATION_MODEL,
+                "diarization": Config.DIARIZATION_MODEL if Config.ENABLE_DIARIZATION else "disabled",
+                "summarization": Config.SUMMARIZATION_MODEL if Config.ENABLE_SUMMARIZATION else "disabled",
+            },
+            # Model rotation status
+            "models_offloaded": models_offloaded,
+            "model_rotation_enabled": Config.ENABLE_MODEL_ROTATION,
+            "summarization_active": summarization_active,
         }
     else:
         stats["gpu"] = None
@@ -1557,6 +1831,70 @@ def handle_stop_listening():
     stop_listening_internal()
 
 
+@socketio.on("trigger_summary")
+def handle_trigger_summary():
+    """Manually trigger a summary generation (admin only)"""
+    global last_summary_time, accumulated_segments
+
+    # Check if user is authenticated admin
+    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
+        emit('summary_error', {'message': 'Summarization is not enabled'})
+        return
+
+    if len(accumulated_segments) == 0:
+        emit('summary_error', {'message': 'No transcript content to summarize yet'})
+        return
+
+    # Build transcript from accumulated segments with timestamps
+    transcript_lines = []
+    for seg in accumulated_segments:
+        speaker = seg.get("speaker", "Speaker")
+        text = seg.get("text", "")
+        ts = seg.get("timestamp", "")
+        transcript_lines.append(f"[{ts}] {speaker}: {text}")
+
+    transcript_text = "\n".join(transcript_lines)
+
+    # Get time range of summarized content
+    first_timestamp = accumulated_segments[0].get("timestamp", "") if accumulated_segments else ""
+    last_timestamp = accumulated_segments[-1].get("timestamp", "") if accumulated_segments else ""
+    time_range = f"{first_timestamp} - {last_timestamp}" if first_timestamp and last_timestamp else ""
+
+    if len(transcript_text) < 50:
+        emit('summary_error', {'message': 'Not enough content to summarize (need at least 50 characters)'})
+        return
+
+    print(f"[SUMMARY] Manual trigger - generating summary for {len(accumulated_segments)} segments ({time_range})...")
+
+    # Generate in background thread to not block
+    def generate_and_emit():
+        global last_summary_time
+        summary = generate_summary(transcript_text, time_range)
+        if summary:
+            last_summary_time = time.time()
+
+            # Emit original summary to admin room
+            socketio.emit('summary_update', summary, room='admin')
+
+            # Translate and emit to each language room
+            for lang_code in active_language_viewers:
+                if active_language_viewers[lang_code] > 0:
+                    translated_summary = translate_summary(summary, lang_code)
+                    socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+        else:
+            socketio.emit('summary_error', {'message': 'Failed to generate summary'}, room='admin')
+
+    summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
+    summary_thread.start()
+
+    # Acknowledge the request
+    emit('summary_generating', {'message': 'Generating summary...'})
+
+
 if __name__ == "__main__":
     # Check for single instance before doing anything else
     check_single_instance()
@@ -1564,9 +1902,6 @@ if __name__ == "__main__":
     # Register cleanup function to remove lock file on exit
     import atexit
     atexit.register(cleanup_lock_file)
-
-    # Generate viewer password at startup
-    Config.VIEWER_PASSWORD = generate_viewer_password()
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Polyglot - Real-time Audio Translator")
@@ -1588,6 +1923,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Interactive startup configuration (password, meeting name, transcript)
+    startup_configuration()
+
     print("Loading configuration...")
     print("Initializing models (this may take a minute)...")
     initialize_models()
@@ -1598,6 +1936,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("Polyglot - Real-time Audio Translator")
     print("=" * 60)
+    print(f"\nMeeting: {MEETING_NAME}")
+    print(f"Transcript: {TRANSCRIPT_FILE.name}")
     print(f"\nOpen your browser to: http://localhost:{args.port}")
     print(f"Device: {Config.DEVICE}")
     print(f"Whisper Model: {Config.WHISPER_MODEL}")
