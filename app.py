@@ -539,6 +539,19 @@ def initialize_models():
     translation_tokenizer = AutoTokenizer.from_pretrained(model_name)
     translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
+    # Debug: Print tokenizer info for NLLB
+    if "nllb" in model_name.lower():
+        if hasattr(translation_tokenizer, 'lang_code_to_id'):
+            available_codes = list(translation_tokenizer.lang_code_to_id.keys())
+            print(f"      NLLB tokenizer loaded with {len(available_codes)} language codes")
+            print(f"      Sample codes: {available_codes[:15]}")
+            # Check if our expected codes are there
+            for code in ['eng_Latn', 'deu_Latn', 'en', 'de']:
+                if code in available_codes:
+                    print(f"      ✓ Found '{code}' in tokenizer")
+                else:
+                    print(f"      ✗ '{code}' NOT in tokenizer")
+
     if device == "cuda":
         translation_model = translation_model.cuda()
         translation_mem = torch.cuda.memory_allocated(0) / 1024**3
