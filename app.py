@@ -270,6 +270,9 @@ MEETING_NAME = None
 # Dynamic audio detection thresholds (can be changed via API)
 audio_thresholds = Config.get_audio_thresholds()
 
+# Audio device selection (session-level persistence)
+selected_audio_device_index = None  # None means auto-detect
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)  # Secret key for sessions
 socketio = SocketIO(app, cors_allowed_origins="*", manage_session=False)
@@ -1789,6 +1792,90 @@ def update_thresholds():
     return jsonify({"status": "success", "thresholds": audio_thresholds})
 
 
+@app.route("/api/audio-devices", methods=["GET"])
+def get_audio_devices():
+    """Get list of available audio input devices"""
+    try:
+        p_audio = pyaudio.PyAudio()
+        devices = []
+
+        for i in range(p_audio.get_device_count()):
+            try:
+                dev_info = p_audio.get_device_info_by_index(i)
+
+                # Only include devices with input channels
+                if dev_info.get("maxInputChannels", 0) > 0:
+                    is_loopback = dev_info.get("isLoopbackDevice", False)
+                    is_default = (i == p_audio.get_default_input_device_info()["index"])
+
+                    devices.append({
+                        "index": i,
+                        "name": dev_info["name"],
+                        "channels": int(dev_info["maxInputChannels"]),
+                        "sample_rate": int(dev_info["defaultSampleRate"]),
+                        "is_loopback": is_loopback,
+                        "is_default": is_default
+                    })
+            except Exception as e:
+                # Skip devices that can't be queried
+                continue
+
+        p_audio.terminate()
+
+        # Sort: loopback devices first, then by name
+        devices.sort(key=lambda d: (not d["is_loopback"], d["name"]))
+
+        return jsonify({
+            "status": "success",
+            "devices": devices,
+            "selected_index": selected_audio_device_index
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/audio-device", methods=["POST"])
+def set_audio_device():
+    """Set the audio device to use for listening"""
+    global selected_audio_device_index
+
+    try:
+        data = request.json
+        device_index = data.get("device_index")
+
+        # None means auto-detect
+        if device_index is None:
+            selected_audio_device_index = None
+            print("[CONFIG] Audio device selection: auto-detect")
+            return jsonify({"status": "success", "message": "Auto-detect enabled"})
+
+        # Validate device exists and has input channels
+        p_audio = pyaudio.PyAudio()
+        try:
+            dev_info = p_audio.get_device_info_by_index(device_index)
+            if dev_info.get("maxInputChannels", 0) <= 0:
+                p_audio.terminate()
+                return jsonify({"status": "error", "message": "Device has no input channels"}), 400
+
+            selected_audio_device_index = device_index
+            print(f"[CONFIG] Audio device selection updated: index={device_index} ({dev_info['name']})")
+            p_audio.terminate()
+
+            return jsonify({
+                "status": "success",
+                "message": "Device selected. Will be used on next 'Start Listening'.",
+                "device_index": device_index
+            })
+
+        except Exception as e:
+            p_audio.terminate()
+            return jsonify({"status": "error", "message": f"Invalid device index: {str(e)}"}), 400
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+
 @app.route("/api/admin/auth", methods=["POST"])
 def admin_auth():
     """Authenticate admin user"""
@@ -2093,12 +2180,29 @@ def start_listening_internal():
 
         # Look for loopback device
         loopback_device = None
-        for i in range(p_audio.get_device_count()):
-            dev_info = p_audio.get_device_info_by_index(i)
-            if dev_info.get("isLoopbackDevice") and "Speakers" in dev_info["name"]:
-                loopback_device = i
-                print(f"Using loopback device: {dev_info['name']}")
-                break
+
+        # Check if device manually selected
+        if selected_audio_device_index is not None:
+            try:
+                dev_info = p_audio.get_device_info_by_index(selected_audio_device_index)
+                if dev_info.get("maxInputChannels", 0) > 0:
+                    loopback_device = selected_audio_device_index
+                    print(f"Using manually selected device: {dev_info['name']}")
+                else:
+                    print(f"[WARNING] Selected device has no input channels, falling back to auto-detect")
+                    socketio.emit("admin_error", {"message": "Selected audio device is not available. Using auto-detect."}, room="admin")
+            except Exception as e:
+                print(f"[WARNING] Selected device not available: {e}. Falling back to auto-detect")
+                socketio.emit("admin_error", {"message": "Selected audio device is not available. Using auto-detect."}, room="admin")
+
+        # Auto-detect loopback device if not manually selected or if manual selection failed
+        if loopback_device is None:
+            for i in range(p_audio.get_device_count()):
+                dev_info = p_audio.get_device_info_by_index(i)
+                if dev_info.get("isLoopbackDevice") and "Speakers" in dev_info["name"]:
+                    loopback_device = i
+                    print(f"Using loopback device: {dev_info['name']}")
+                    break
 
         if loopback_device is None:
             print("No loopback device found! Using default microphone.")
@@ -2129,11 +2233,23 @@ def start_listening_internal():
 @socketio.on("start_listening")
 def handle_start_listening():
     """Start listening for audio (admin only)"""
+    print(f"[START] Received start_listening from {request.sid}")
+
     # Check if user is authenticated admin
-    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+    if request.sid not in connected_clients:
+        print(f"[START] ERROR: {request.sid} not in connected_clients")
         emit('error', {'message': 'Unauthorized. Admin access required.'})
         return
 
+    client_role = connected_clients[request.sid].get('role')
+    print(f"[START] Client {request.sid} has role: {client_role}")
+
+    if client_role != 'admin':
+        print(f"[START] ERROR: Client role is '{client_role}', not 'admin'")
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    print(f"[START] Authorization passed, calling start_listening_internal()")
     start_listening_internal()
 
 
@@ -2159,11 +2275,23 @@ def stop_listening_internal():
 @socketio.on("stop_listening")
 def handle_stop_listening():
     """Stop listening for audio (admin only)"""
+    print(f"[STOP] Received stop_listening from {request.sid}")
+
     # Check if user is authenticated admin
-    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
+    if request.sid not in connected_clients:
+        print(f"[STOP] ERROR: {request.sid} not in connected_clients")
         emit('error', {'message': 'Unauthorized. Admin access required.'})
         return
 
+    client_role = connected_clients[request.sid].get('role')
+    print(f"[STOP] Client {request.sid} has role: {client_role}")
+
+    if client_role != 'admin':
+        print(f"[STOP] ERROR: Client role is '{client_role}', not 'admin'")
+        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        return
+
+    print(f"[STOP] Authorization passed, calling stop_listening_internal()")
     stop_listening_internal()
 
 
