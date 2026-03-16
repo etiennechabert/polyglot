@@ -1132,14 +1132,9 @@ def translate_text(text, source_lang, target_lang):
         src_code = Config.get_translation_lang_code(source_lang)
         tgt_code = Config.get_translation_lang_code(target_lang)
 
-        # For NLLB, set src_lang on tokenizer; for M2M100, it's set via attribute
-        if "nllb" in Config.TRANSLATION_MODEL.lower():
-            # NLLB: Use src_lang parameter in tokenizer call
-            encoded = translation_tokenizer(text, return_tensors="pt", src_lang=src_code)
-        else:
-            # M2M100: Set src_lang attribute
-            translation_tokenizer.src_lang = src_code
-            encoded = translation_tokenizer(text, return_tensors="pt")
+        # Set source language on tokenizer (both NLLB and M2M100 use this approach)
+        translation_tokenizer.src_lang = src_code
+        encoded = translation_tokenizer(text, return_tensors="pt")
 
         if Config.DEVICE == "cuda":
             encoded = {k: v.cuda() for k, v in encoded.items()}
