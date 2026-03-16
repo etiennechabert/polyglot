@@ -1132,19 +1132,29 @@ def translate_text(text, source_lang, target_lang):
         src_code = Config.get_translation_lang_code(source_lang)
         tgt_code = Config.get_translation_lang_code(target_lang)
 
-        translation_tokenizer.src_lang = src_code
-        encoded = translation_tokenizer(text, return_tensors="pt")
+        # For NLLB, set src_lang on tokenizer; for M2M100, it's set via attribute
+        if "nllb" in Config.TRANSLATION_MODEL.lower():
+            # NLLB: Use src_lang parameter in tokenizer call
+            encoded = translation_tokenizer(text, return_tensors="pt", src_lang=src_code)
+        else:
+            # M2M100: Set src_lang attribute
+            translation_tokenizer.src_lang = src_code
+            encoded = translation_tokenizer(text, return_tensors="pt")
 
         if Config.DEVICE == "cuda":
             encoded = {k: v.cuda() for k, v in encoded.items()}
 
-        # NLLB uses lang_code_to_id instead of get_lang_id
-        if hasattr(translation_tokenizer, 'lang_code_to_id'):
-            # NLLB tokenizer
+        # Get forced BOS token ID for target language
+        try:
+            # Try NLLB method first (lang_code_to_id dictionary)
             forced_bos_token_id = translation_tokenizer.lang_code_to_id[tgt_code]
-        else:
-            # M2M100 tokenizer
-            forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
+        except (AttributeError, KeyError):
+            try:
+                # Fall back to M2M100 method (get_lang_id)
+                forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
+            except AttributeError:
+                # If neither works, raise a helpful error
+                raise ValueError(f"Cannot determine token ID for language '{tgt_code}' with tokenizer type {type(translation_tokenizer)}")
 
         generated_tokens = translation_model.generate(
             **encoded, forced_bos_token_id=forced_bos_token_id, max_length=512
