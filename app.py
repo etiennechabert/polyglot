@@ -757,13 +757,13 @@ Meeting: {minutes_since_start} min total. Time range: {time_range}
 
 {context_section}
 
-Output JSON:
-{{"recent_details": ["point 1", "point 2", "point 3", ...]}}
+Output ONLY this JSON format (array of strings, NOT objects):
+{{"recent_details": ["First point as a string", "Second point as a string", "Third point", "Fourth point", "Fifth point"]}}
 
 Rules:
-- Exactly 5 CONCISE bullet points about the RECENT discussion
-- Keep each point short but specific: include key names, numbers, facts
-- Focus on what was just discussed, not the whole meeting<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+- Exactly 5 short bullet points as plain strings in the array
+- Include specific names, numbers, facts mentioned
+- Focus only on what was just discussed<|eot_id|><|start_header_id|>assistant<|end_header_id|}}
 """
 
         # Generate summary (no token limit - let model decide)
@@ -845,7 +845,20 @@ Rules:
             with summary_lock:
                 # Update recent details (detailed view of last ~5 min)
                 # Support both old field name (recent_bullets) and new (recent_details)
-                current_summary["recent_bullets"] = summary_data.get("recent_details", summary_data.get("recent_bullets", []))
+                raw_details = summary_data.get("recent_details", summary_data.get("recent_bullets", []))
+
+                # Handle case where LLM outputs objects instead of strings
+                # e.g., [{"point": "...", "fact": "..."}] instead of ["..."]
+                current_summary["recent_bullets"] = []
+                for item in raw_details:
+                    if isinstance(item, str):
+                        current_summary["recent_bullets"].append(item)
+                    elif isinstance(item, dict):
+                        # Extract text from object - try common keys
+                        text = item.get("point") or item.get("text") or item.get("fact") or item.get("detail") or str(item)
+                        if item.get("fact") and item.get("point"):
+                            text = f"{item.get('point')} - {item.get('fact')}"
+                        current_summary["recent_bullets"].append(text)
 
                 # Update timeline sections (chronological with time ranges)
                 # Support both old field name (overview_sections) and new (timeline)
