@@ -1138,8 +1138,16 @@ def translate_text(text, source_lang, target_lang):
         if Config.DEVICE == "cuda":
             encoded = {k: v.cuda() for k, v in encoded.items()}
 
+        # NLLB uses lang_code_to_id instead of get_lang_id
+        if hasattr(translation_tokenizer, 'lang_code_to_id'):
+            # NLLB tokenizer
+            forced_bos_token_id = translation_tokenizer.lang_code_to_id[tgt_code]
+        else:
+            # M2M100 tokenizer
+            forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
+
         generated_tokens = translation_model.generate(
-            **encoded, forced_bos_token_id=translation_tokenizer.get_lang_id(tgt_code), max_length=512
+            **encoded, forced_bos_token_id=forced_bos_token_id, max_length=512
         )
 
         translated = translation_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
