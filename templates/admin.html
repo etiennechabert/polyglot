@@ -765,9 +765,9 @@
             }
         </style>
 
-        <!-- Transcript and Summary - 50/50 Split Layout -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1; min-height: 0;">
-            <!-- Left Panel: Transcript -->
+        <!-- Transcript - Full Width (Summary Temporarily Disabled) -->
+        <div style="display: grid; grid-template-columns: 1fr; gap: 10px; flex: 1; min-height: 0;">
+            <!-- Transcript Panel -->
             <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
                     <h2 style="margin: 0;">📝 Transcript</h2>
@@ -785,8 +785,8 @@
                 </div>
             </div>
 
-            <!-- Right Panel: Live Summary -->
-            <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%; background: rgba(236, 72, 153, 0.05); border: 1px solid rgba(236, 72, 153, 0.2);">
+            <!-- Right Panel: Live Summary (TEMPORARILY DISABLED) -->
+            <div class="panel" style="display: none; flex-direction: column; max-height: none; height: 100%; background: rgba(236, 72, 153, 0.05); border: 1px solid rgba(236, 72, 153, 0.2);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
                     <h2 style="margin: 0; color: #ec4899;">📋 Live Summary</h2>
                     <div style="display: flex; gap: 8px; align-items: center;">
