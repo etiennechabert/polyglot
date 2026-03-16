@@ -83,6 +83,9 @@ def startup_configuration():
     """Interactive startup configuration for meeting and password"""
     global TRANSCRIPT_FILE, MEETING_NAME
 
+    # Check if running in interactive mode (has a terminal/TTY)
+    is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False
+
     print("\n" + "=" * 60)
     print("  POLYGLOT - Startup Configuration")
     print("=" * 60)
@@ -91,27 +94,39 @@ def startup_configuration():
     saved_password = load_saved_password()
     if saved_password:
         print(f"\n[PASSWORD] Previous viewer password found: {saved_password}")
-        while True:
-            choice = input("  Reuse this password? (Y/n): ").strip().lower()
-            if choice in ('', 'y', 'yes'):
-                Config.VIEWER_PASSWORD = saved_password
-                print(f"  -> Using saved password: {saved_password}")
-                break
-            elif choice in ('n', 'no'):
-                Config.VIEWER_PASSWORD = generate_viewer_password()
-                save_password(Config.VIEWER_PASSWORD)
-                print(f"  -> Generated new password: {Config.VIEWER_PASSWORD}")
-                break
-            else:
-                print("  Please enter 'y' or 'n'")
+        try:
+            while True:
+                choice = input("  Reuse this password? (Y/n): ").strip().lower()
+                if choice in ('', 'y', 'yes'):
+                    Config.VIEWER_PASSWORD = saved_password
+                    print(f"  -> Using saved password: {saved_password}")
+                    break
+                elif choice in ('n', 'no'):
+                    Config.VIEWER_PASSWORD = generate_viewer_password()
+                    save_password(Config.VIEWER_PASSWORD)
+                    print(f"  -> Generated new password: {Config.VIEWER_PASSWORD}")
+                    break
+                else:
+                    print("  Please enter 'y' or 'n'")
+        except (EOFError, OSError):
+            # Non-interactive mode, use saved password
+            Config.VIEWER_PASSWORD = saved_password
+            print(f"  -> Auto-using saved password (non-interactive mode): {saved_password}")
     else:
         Config.VIEWER_PASSWORD = generate_viewer_password()
         save_password(Config.VIEWER_PASSWORD)
         print(f"\n[PASSWORD] Generated new viewer password: {Config.VIEWER_PASSWORD}")
 
     # --- Meeting Name Configuration ---
-    print(f"\n[MEETING] Enter a name for this meeting/session")
-    meeting_name = input("  Meeting name (or press Enter for timestamp): ").strip()
+    if is_interactive:
+        print(f"\n[MEETING] Enter a name for this meeting/session")
+        try:
+            meeting_name = input("  Meeting name (or press Enter for timestamp): ").strip()
+        except (EOFError, OSError):
+            meeting_name = ""
+    else:
+        print(f"\n[MEETING] Auto-generating meeting name (non-interactive mode)")
+        meeting_name = ""
 
     if meeting_name:
         MEETING_NAME = meeting_name
@@ -125,7 +140,7 @@ def startup_configuration():
     # --- Transcript File Configuration ---
     existing_transcripts = get_existing_transcripts()
 
-    if existing_transcripts:
+    if existing_transcripts and is_interactive:
         print(f"\n[TRANSCRIPT] Found {len(existing_transcripts)} existing transcript(s):")
         print("  0. Create NEW transcript file")
         for i, tf in enumerate(existing_transcripts[:10], 1):  # Show max 10
@@ -134,7 +149,11 @@ def startup_configuration():
             print(f"  {i}. {tf.name} ({size_kb:.1f}KB, {mod_time})")
 
         while True:
-            choice = input("\n  Select transcript (0 for new, or number to continue): ").strip()
+            try:
+                choice = input("\n  Select transcript (0 for new, or number to continue): ").strip()
+            except (EOFError, OSError):
+                choice = '0'
+
             if choice == '' or choice == '0':
                 # Create new transcript
                 transcripts_dir = Path("transcripts")
@@ -151,11 +170,14 @@ def startup_configuration():
             else:
                 print("  Invalid choice, please try again")
     else:
-        # No existing transcripts, create new
+        # No existing transcripts or non-interactive mode, create new
         transcripts_dir = Path("transcripts")
         transcripts_dir.mkdir(exist_ok=True)
         TRANSCRIPT_FILE = transcripts_dir / transcript_filename
-        print(f"\n[TRANSCRIPT] Creating new transcript: {TRANSCRIPT_FILE.name}")
+        if existing_transcripts and not is_interactive:
+            print(f"\n[TRANSCRIPT] Auto-creating new transcript (non-interactive mode): {TRANSCRIPT_FILE.name}")
+        else:
+            print(f"\n[TRANSCRIPT] Creating new transcript: {TRANSCRIPT_FILE.name}")
 
     print("\n" + "-" * 60)
     print(f"  Meeting: {MEETING_NAME}")
@@ -757,13 +779,13 @@ Meeting: {minutes_since_start} min total. Time range: {time_range}
 
 {context_section}
 
-Output JSON:
-{{"recent_details": ["point 1", "point 2", "point 3", ...]}}
+Output ONLY this JSON format (array of strings, NOT objects):
+{{"recent_details": ["First point as a string", "Second point as a string", "Third point", "Fourth point", "Fifth point"]}}
 
 Rules:
-- Exactly 5 CONCISE bullet points about the RECENT discussion
-- Keep each point short but specific: include key names, numbers, facts
-- Focus on what was just discussed, not the whole meeting<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+- Exactly 5 short bullet points as plain strings in the array
+- Include specific names, numbers, facts mentioned
+- Focus only on what was just discussed<|eot_id|><|start_header_id|>assistant<|end_header_id|}}
 """
 
         # Generate summary (no token limit - let model decide)
@@ -845,7 +867,20 @@ Rules:
             with summary_lock:
                 # Update recent details (detailed view of last ~5 min)
                 # Support both old field name (recent_bullets) and new (recent_details)
-                current_summary["recent_bullets"] = summary_data.get("recent_details", summary_data.get("recent_bullets", []))
+                raw_details = summary_data.get("recent_details", summary_data.get("recent_bullets", []))
+
+                # Handle case where LLM outputs objects instead of strings
+                # e.g., [{"point": "...", "fact": "..."}] instead of ["..."]
+                current_summary["recent_bullets"] = []
+                for item in raw_details:
+                    if isinstance(item, str):
+                        current_summary["recent_bullets"].append(item)
+                    elif isinstance(item, dict):
+                        # Extract text from object - try common keys
+                        text = item.get("point") or item.get("text") or item.get("fact") or item.get("detail") or str(item)
+                        if item.get("fact") and item.get("point"):
+                            text = f"{item.get('point')} - {item.get('fact')}"
+                        current_summary["recent_bullets"].append(text)
 
                 # Update timeline sections (chronological with time ranges)
                 # Support both old field name (overview_sections) and new (timeline)
