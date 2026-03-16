@@ -200,7 +200,7 @@ import torch
 from flask import Flask, jsonify, render_template, request, session
 from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 from langdetect import LangDetectException, detect
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 # Monkey patch transformers to disable torchcodec detection
 import transformers.utils.import_utils
@@ -530,12 +530,14 @@ def initialize_models():
         print(f"      [OK] Loaded successfully (CPU)")
     print()
 
-    # Initialize M2M100
+    # Initialize Translation Model (M2M100 or NLLB)
     current_model += 1
     model_name = Config.TRANSLATION_MODEL
     print(f"[{current_model}/{model_count}] Loading Translation Model: {model_name}")
-    translation_model = M2M100ForConditionalGeneration.from_pretrained(model_name)
-    translation_tokenizer = M2M100Tokenizer.from_pretrained(model_name)
+
+    # Use AutoTokenizer and AutoModel for compatibility with both M2M100 and NLLB
+    translation_tokenizer = AutoTokenizer.from_pretrained(model_name)
+    translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
     if device == "cuda":
         translation_model = translation_model.cuda()
@@ -1114,7 +1116,7 @@ def translate_summary(summary, target_lang, source_lang="en"):
 
 @torch.inference_mode()
 def translate_text(text, source_lang, target_lang):
-    """Translate text using M2M100"""
+    """Translate text using translation model (M2M100 or NLLB)"""
     if source_lang == target_lang:
         return text
 
@@ -1126,14 +1128,18 @@ def translate_text(text, source_lang, target_lang):
         return text
 
     try:
-        translation_tokenizer.src_lang = source_lang
+        # Convert language codes for NLLB models
+        src_code = Config.get_translation_lang_code(source_lang)
+        tgt_code = Config.get_translation_lang_code(target_lang)
+
+        translation_tokenizer.src_lang = src_code
         encoded = translation_tokenizer(text, return_tensors="pt")
 
         if Config.DEVICE == "cuda":
             encoded = {k: v.cuda() for k, v in encoded.items()}
 
         generated_tokens = translation_model.generate(
-            **encoded, forced_bos_token_id=translation_tokenizer.get_lang_id(target_lang), max_length=512
+            **encoded, forced_bos_token_id=translation_tokenizer.get_lang_id(tgt_code), max_length=512
         )
 
         translated = translation_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
