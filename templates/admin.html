@@ -1840,10 +1840,12 @@ Example:
         socket.on('processing_started', (data) => {
             // Flash the debug panel when processing starts
             const debugPanel = document.getElementById('debugPanel');
-            debugPanel.classList.remove('debug-flash');
-            // Trigger reflow to restart animation
-            void debugPanel.offsetWidth;
-            debugPanel.classList.add('debug-flash');
+            if (debugPanel) {
+                debugPanel.classList.remove('debug-flash');
+                // Trigger reflow to restart animation
+                void debugPanel.offsetWidth;
+                debugPanel.classList.add('debug-flash');
+            }
         });
 
         function updateStatus() {
@@ -1853,7 +1855,12 @@ Example:
             const visualizer = document.getElementById('audioVisualizer');
 
             console.log('[updateStatus] isListening:', isListening);
-            console.log('[updateStatus] stopBtn found:', !!stopBtn);
+            console.log('[updateStatus] Elements found - status:', !!statusEl, 'start:', !!startBtn, 'stop:', !!stopBtn, 'visualizer:', !!visualizer);
+
+            if (!statusEl || !startBtn || !stopBtn || !visualizer) {
+                console.warn('[updateStatus] Some elements not found, skipping update');
+                return;
+            }
 
             if (isListening) {
                 statusEl.className = 'status listening';
