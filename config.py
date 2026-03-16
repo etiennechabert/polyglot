@@ -126,7 +126,10 @@ class Config:
     # Options:
     #   - "facebook/m2m100_418M" (smaller, faster, ~2GB VRAM, ~1-2s per segment)
     #   - "facebook/m2m100_1.2B" (larger, better quality, ~5GB VRAM, ~3-5s per segment)
-    TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "facebook/m2m100_1.2B")
+    #   - "facebook/nllb-200-distilled-600M" (modern, ~2.5GB VRAM, 200 langs, ~2-3s per segment)
+    #   - "facebook/nllb-200-distilled-1.3B" (modern, ~5GB VRAM, 200 langs, ~4-5s per segment) - RECOMMENDED
+    #   - "facebook/nllb-200-3.3B" (best quality, ~8GB VRAM, 200 langs, ~6-8s per segment)
+    TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "facebook/nllb-200-distilled-1.3B")
 
     # Target languages for translation
     # Each entry is a dict with "code" (ISO 639-1) and "name"
@@ -152,6 +155,34 @@ class Config:
     # If True, uses langdetect to identify the spoken language
     # If False, you need to specify a source language
     SOURCE_LANGUAGE_AUTO_DETECT = True
+
+    # Language code mapping for NLLB models
+    # NLLB uses different codes than m2m100 (e.g., "eng_Latn" instead of "en")
+    # This maps ISO 639-1 codes to NLLB codes
+    NLLB_LANG_CODE_MAP = {
+        "en": "eng_Latn",
+        "de": "deu_Latn",
+        "es": "spa_Latn",
+        "fr": "fra_Latn",
+        "it": "ita_Latn",
+        "pt": "por_Latn",
+        "nl": "nld_Latn",
+        "pl": "pol_Latn",
+        "ru": "rus_Cyrl",
+        "zh": "zho_Hans",
+        "ja": "jpn_Jpan",
+        "ko": "kor_Hang",
+        "ar": "arb_Arab",
+        "hi": "hin_Deva",
+        "sv": "swe_Latn",
+    }
+
+    @classmethod
+    def get_translation_lang_code(cls, iso_code):
+        """Convert ISO 639-1 code to model-specific code"""
+        if "nllb" in cls.TRANSLATION_MODEL.lower():
+            return cls.NLLB_LANG_CODE_MAP.get(iso_code, iso_code)
+        return iso_code  # m2m100 uses ISO codes directly
 
     # Audio detection thresholds
     # These control when the app decides a sentence has ended
