@@ -541,16 +541,16 @@ def initialize_models():
 
     # Debug: Print tokenizer info for NLLB
     if "nllb" in model_name.lower():
-        if hasattr(translation_tokenizer, 'lang_code_to_id'):
-            available_codes = list(translation_tokenizer.lang_code_to_id.keys())
-            print(f"      NLLB tokenizer loaded with {len(available_codes)} language codes")
-            print(f"      Sample codes: {available_codes[:15]}")
-            # Check if our expected codes are there
-            for code in ['eng_Latn', 'deu_Latn', 'en', 'de']:
-                if code in available_codes:
-                    print(f"      ✓ Found '{code}' in tokenizer")
-                else:
-                    print(f"      ✗ '{code}' NOT in tokenizer")
+        print(f"      NLLB tokenizer type: {type(translation_tokenizer).__name__}")
+        # Test language code conversion for our target languages
+        test_codes = ['eng_Latn', 'deu_Latn']
+        print(f"      Testing language codes:")
+        for code in test_codes:
+            try:
+                token_id = translation_tokenizer.convert_tokens_to_ids(code)
+                print(f"        ✓ '{code}' -> token_id={token_id}")
+            except Exception as e:
+                print(f"        ✗ '{code}' failed: {e}")
 
     if device == "cuda":
         translation_model = translation_model.cuda()
@@ -1153,26 +1153,14 @@ def translate_text(text, source_lang, target_lang):
             encoded = {k: v.cuda() for k, v in encoded.items()}
 
         # Get forced BOS token ID for target language
-        try:
-            # Try NLLB method first (lang_code_to_id dictionary)
-            forced_bos_token_id = translation_tokenizer.lang_code_to_id[tgt_code]
-        except (AttributeError, KeyError) as e:
-            # Debug: Print available language codes if NLLB
-            if hasattr(translation_tokenizer, 'lang_code_to_id'):
-                available = list(translation_tokenizer.lang_code_to_id.keys())
-                print(f"[DEBUG] NLLB tokenizer has {len(available)} language codes")
-                print(f"[DEBUG] Looking for: '{tgt_code}'")
-                print(f"[DEBUG] Sample codes: {available[:10]}")
-                # Check if any similar codes exist
-                similar = [c for c in available if tgt_code[:3] in c or c[:3] in tgt_code]
-                if similar:
-                    print(f"[DEBUG] Similar codes found: {similar}")
-            try:
-                # Fall back to M2M100 method (get_lang_id)
-                forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
-            except AttributeError:
-                # If neither works, raise a helpful error
-                raise ValueError(f"Cannot determine token ID for language '{tgt_code}' with tokenizer type {type(translation_tokenizer)}")
+        # For NLLB models, use convert_tokens_to_ids with the language code
+        # For M2M100 models, use get_lang_id
+        if hasattr(translation_tokenizer, 'get_lang_id'):
+            # M2M100 tokenizer
+            forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
+        else:
+            # NLLB tokenizer - convert language code to token ID
+            forced_bos_token_id = translation_tokenizer.convert_tokens_to_ids(tgt_code)
 
         generated_tokens = translation_model.generate(
             **encoded, forced_bos_token_id=forced_bos_token_id, max_length=512
