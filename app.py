@@ -1143,7 +1143,17 @@ def translate_text(text, source_lang, target_lang):
         try:
             # Try NLLB method first (lang_code_to_id dictionary)
             forced_bos_token_id = translation_tokenizer.lang_code_to_id[tgt_code]
-        except (AttributeError, KeyError):
+        except (AttributeError, KeyError) as e:
+            # Debug: Print available language codes if NLLB
+            if hasattr(translation_tokenizer, 'lang_code_to_id'):
+                available = list(translation_tokenizer.lang_code_to_id.keys())
+                print(f"[DEBUG] NLLB tokenizer has {len(available)} language codes")
+                print(f"[DEBUG] Looking for: '{tgt_code}'")
+                print(f"[DEBUG] Sample codes: {available[:10]}")
+                # Check if any similar codes exist
+                similar = [c for c in available if tgt_code[:3] in c or c[:3] in tgt_code]
+                if similar:
+                    print(f"[DEBUG] Similar codes found: {similar}")
             try:
                 # Fall back to M2M100 method (get_lang_id)
                 forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
