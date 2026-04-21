@@ -869,7 +869,15 @@
                     group.segs.forEach(seg => {
                         const li = document.createElement('li');
                         li.style.cssText = 'display:flex; gap:8px; align-items:baseline; margin-bottom:2px;';
-                        const absMs = utterance.timestamp + (seg.start || 0) * 1000;
+                        // Prefer batch_end_ts_ms anchor from the backend. Seg.start is
+                        // seconds from batch start, so absolute spoken-at time is
+                        // batch_end - (audio_duration - seg.start) * 1000.
+                        let absMs;
+                        if (utterance.batch_end_ts_ms && utterance.audio_duration_secs != null) {
+                            absMs = utterance.batch_end_ts_ms - (utterance.audio_duration_secs - (seg.start || 0)) * 1000;
+                        } else {
+                            absMs = utterance.timestamp + (seg.start || 0) * 1000;
+                        }
                         const d = new Date(absMs);
                         const ss = String(d.getSeconds()).padStart(2, '0');
                         const tsSpan = document.createElement('span');
@@ -942,13 +950,20 @@
 
             const uttId = data.utterance_id || `anon_${_anonUtteranceCounter++}`;
             const segments = data.translated_segments[selectedLanguage].map(s => ({
-                speaker: s.speaker || null, text: s.text,
+                speaker: s.speaker || null,
+                text: s.text,
+                start: s.start,
+                end: s.end,
             }));
+            // True wall-clock anchor for the batch. Each segment's spoken-at
+            // time = batch_end_ts_ms - (audio_duration_secs - seg.start) * 1000.
             const entry = {
                 utterance_id: uttId,
                 segments: segments,
                 is_partial: !!data.is_partial,
                 timestamp: Date.now(),
+                batch_end_ts_ms: data.batch_end_ts_ms || null,
+                audio_duration_secs: data.audio_duration_secs || null,
             };
 
             const existingIdx = displayedTranslations.findIndex(u => u.utterance_id === uttId);
