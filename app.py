@@ -1277,6 +1277,12 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
     Considers both closed (speaker_timeline) and still-open (_active_speaker_starts)
     intervals, since a speaker who started talking during this batch may not have
     emitted speaker_end yet when the transcription thread kicks off.
+
+    Multi-voice disambiguation: when two or more distinct pyannote IDs in the
+    same batch resolve to the SAME caption name (e.g. two people speaking from
+    one shared Meet account), we suffix each name with "#1", "#2", etc., ordered
+    chronologically by first appearance in the batch. This preserves pyannote's
+    split instead of collapsing both voices to a single label.
     """
     if batch_end_ts_ms is None or not speaker_segments:
         return {}
@@ -1293,13 +1299,21 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
     from collections import defaultdict
     batch_start_ms = batch_end_ts_ms - audio_duration_secs * 1000
 
-    speaker_times = defaultdict(list)
+    # Group pyannote segments by their original id, preserving first-appearance
+    # order (we iterate speaker_segments in chronological order).
+    speaker_times = {}
+    first_seen = {}
     for seg in speaker_segments:
+        orig = seg["speaker"]
         seg_start_ms = batch_start_ms + seg["start"] * 1000
         seg_end_ms = batch_start_ms + seg["end"] * 1000
-        speaker_times[seg["speaker"]].append((seg_start_ms, seg_end_ms))
+        if orig not in speaker_times:
+            speaker_times[orig] = []
+            first_seen[orig] = seg_start_ms
+        speaker_times[orig].append((seg_start_ms, seg_end_ms))
 
-    resolved = {}
+    # First pass: majority-vote caption name per pyannote id.
+    raw_resolved = {}  # orig_id -> caption_name
     for original_id, time_ranges in speaker_times.items():
         name_overlap = defaultdict(float)
         for seg_start_ms, seg_end_ms in time_ranges:
@@ -1307,14 +1321,26 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
                 overlap = max(0.0, min(seg_end_ms, tl_end) - max(seg_start_ms, tl_start))
                 if overlap > 0:
                     name_overlap[name] += overlap
-
         if not name_overlap:
             continue
-
         best_name = max(name_overlap, key=name_overlap.get)
         total_ms = sum(end - start for start, end in time_ranges)
         if total_ms > 0 and name_overlap[best_name] / total_ms >= 0.30:
-            resolved[original_id] = best_name
+            raw_resolved[original_id] = best_name
+
+    # Second pass: disambiguate collisions. If multiple pyannote IDs map to the
+    # same caption name, assign each a "#N" suffix in chronological order.
+    by_name = defaultdict(list)  # caption_name -> [orig_id...] (first-appearance order)
+    for orig_id in sorted(raw_resolved, key=lambda oid: first_seen[oid]):
+        by_name[raw_resolved[orig_id]].append(orig_id)
+
+    resolved = {}
+    for name, ids in by_name.items():
+        if len(ids) == 1:
+            resolved[ids[0]] = name
+        else:
+            for i, orig_id in enumerate(ids, start=1):
+                resolved[orig_id] = f"{name} Speaker #{i}"
 
     return resolved
 
@@ -1357,6 +1383,9 @@ def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_en
 
         speaker = speaker_hint or "Speaker 1"
         segment = {"text": full_transcript, "speaker": speaker, "start": 0.0, "end": audio_duration}
+        # Anchor the batch on wall-clock so the viewer can compute the true
+        # moment each sentence was spoken (seg.start is seconds from batch start).
+        batch_anchor_ms = batch_end_ts_ms if batch_end_ts_ms else int(time.time() * 1000)
         ws_payload = {
             "transcript": full_transcript,
             "source_language": source_lang,
@@ -1365,6 +1394,8 @@ def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_en
             "segments": [segment],
             "utterance_id": utterance_id,
             "is_partial": True,
+            "batch_end_ts_ms": batch_anchor_ms,
+            "audio_duration_secs": audio_duration,
         }
         socketio.emit("new_translation", ws_payload, room="admin")
         for lang_code, n in active_language_viewers.items():
@@ -1395,6 +1426,8 @@ def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_en
             "utterance_id": utterance_id,
             "is_partial": True,
             "is_update": True,
+            "batch_end_ts_ms": batch_anchor_ms,
+            "audio_duration_secs": audio_duration,
         }
         socketio.emit("new_translation", ws_payload_final, room="admin")
         for lang_code in translated_segments_by_lang:
@@ -1667,6 +1700,10 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
         # Check if it's time to generate a summary
         check_and_generate_summary()
 
+        # Wall-clock anchor for the batch so the viewer can compute each
+        # segment's true spoken-at time from batch_end_ts_ms + seg.start.
+        final_batch_anchor_ms = batch_end_ts_ms if batch_end_ts_ms else int(time.time() * 1000)
+
         # IMMEDIATELY send transcription to UI (before translations)
         # This makes the UI feel much more responsive
         ws_payload_initial = {
@@ -1678,6 +1715,8 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
             "utterance_id": utterance_id,
             "is_partial": False,
             "is_initial": True,  # Flag to indicate translations are coming
+            "batch_end_ts_ms": final_batch_anchor_ms,
+            "audio_duration_secs": audio_duration,
         }
 
         if Config.DEBUG:
@@ -1760,6 +1799,8 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
             "utterance_id": utterance_id,
             "is_partial": False,
             "is_update": True,  # Flag to indicate this is a translation update
+            "batch_end_ts_ms": final_batch_anchor_ms,
+            "audio_duration_secs": audio_duration,
         }
 
         if Config.DEBUG:

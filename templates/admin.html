@@ -2051,7 +2051,12 @@ Example:
                         ? `<div style="font-weight:600; color:#a78bfa; margin-bottom:4px;">${_escHtml(g.speaker)}</div>`
                         : '';
                     const items = g.segs.map(seg => {
-                        const absMs = utteranceMs + (seg.start || 0) * 1000;
+                        let absMs;
+                        if (u.batch_end_ts_ms && u.audio_duration_secs != null) {
+                            absMs = u.batch_end_ts_ms - (u.audio_duration_secs - (seg.start || 0)) * 1000;
+                        } else {
+                            absMs = utteranceMs + (seg.start || 0) * 1000;
+                        }
                         const ss = String(new Date(absMs).getSeconds()).padStart(2, '0');
                         return `<li style="display:flex; gap:8px; align-items:baseline; margin-bottom:2px; list-style:none;"><span style="color:#6b7280; font-size:11px; font-variant-numeric:tabular-nums; flex-shrink:0; min-width:24px;">:${ss}</span><span>${_escHtml(seg.text)}</span></li>`;
                     }).join('');
@@ -2101,6 +2106,8 @@ Example:
                 const entry = {
                     utterance_id: uttId,
                     segments: data.segments,
+                    batch_end_ts_ms: data.batch_end_ts_ms || null,
+                    audio_duration_secs: data.audio_duration_secs || null,
                     is_partial: !!data.is_partial,
                     timestamp: data.timestamp,
                 };
