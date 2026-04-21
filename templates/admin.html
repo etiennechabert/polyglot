@@ -894,7 +894,7 @@ Example:
                                title="Volume level considered as silence. INCREASE if breaking at small pauses. DECREASE if not detecting sentence breaks.">
                     </div>
 
-                    <div title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
+                    <div style="margin-bottom: 15px;" title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
                         <label for="silenceChunks" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
                             <span>Silence Duration (chunks) ℹ️</span>
                             <span id="silenceChunksValue">30</span>
@@ -902,6 +902,16 @@ Example:
                         <input type="range" id="silenceChunks" min="10" max="100" step="5" value="30"
                                style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('silenceChunks')"
                                title="How long silence must last to trigger sentence end. INCREASE if sentences break too often. DECREASE if sentences run together.">
+                    </div>
+
+                    <div title="How often the bot re-transcribes the growing buffer while a speaker keeps talking. LOWER for more responsive live text (more GPU). HIGHER to save GPU.">
+                        <label for="partialInterval" style="font-size: 13px; display: flex; justify-content: space-between; cursor: help;">
+                            <span>Partial Transcription Interval (seconds) ℹ️</span>
+                            <span id="partialIntervalValue">5.0</span>
+                        </label>
+                        <input type="range" id="partialInterval" min="2" max="30" step="1" value="5"
+                               style="width: 100%; margin-top: 5px; cursor: pointer;" oninput="updateThresholdDisplay('partialInterval')"
+                               title="How often the bot re-transcribes the growing buffer while a speaker keeps talking. LOWER for more responsive live text (more GPU). HIGHER to save GPU.">
                     </div>
                 </div>
             </div>
@@ -2010,6 +2020,12 @@ Example:
         // Fallback counter for payloads missing an utterance_id (legacy / mic mode).
         let _anonUtteranceCounter = 0;
 
+        function _escHtml(s) {
+            return String(s || '').replace(/[&<>"']/g, c => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+            ));
+        }
+
         function renderAdminTranscript() {
             const transcriptContent = document.getElementById('transcriptContent');
             if (!transcriptContent) return;
@@ -2018,10 +2034,30 @@ Example:
                 return;
             }
             const html = transcriptUtterances.map(u => {
-                const time = new Date(u.timestamp * 1000).toLocaleTimeString();
-                const segmentsHtml = u.segments.map(seg =>
-                    `<div><strong>${seg.speaker || 'Speaker'}:</strong> ${seg.text}</div>`
-                ).join('');
+                const utteranceMs = u.timestamp * 1000; // backend sends float seconds
+                const time = new Date(utteranceMs).toLocaleTimeString();
+
+                // Group consecutive same-speaker segments so the name shows once
+                // and each sentence becomes a bullet with its own :SS timestamp.
+                const groups = [];
+                u.segments.forEach(seg => {
+                    const last = groups[groups.length - 1];
+                    if (last && last.speaker === seg.speaker) last.segs.push(seg);
+                    else groups.push({ speaker: seg.speaker, segs: [seg] });
+                });
+
+                const segmentsHtml = groups.map(g => {
+                    const speakerLine = g.speaker
+                        ? `<div style="font-weight:600; color:#a78bfa; margin-bottom:4px;">${_escHtml(g.speaker)}</div>`
+                        : '';
+                    const items = g.segs.map(seg => {
+                        const absMs = utteranceMs + (seg.start || 0) * 1000;
+                        const ss = String(new Date(absMs).getSeconds()).padStart(2, '0');
+                        return `<li style="display:flex; gap:8px; align-items:baseline; margin-bottom:2px; list-style:none;"><span style="color:#6b7280; font-size:11px; font-variant-numeric:tabular-nums; flex-shrink:0; min-width:24px;">:${ss}</span><span>${_escHtml(seg.text)}</span></li>`;
+                    }).join('');
+                    return `<div style="margin-bottom:8px;">${speakerLine}<ul style="margin:0; padding:0;">${items}</ul></div>`;
+                }).join('');
+
                 const border = u.is_partial ? '3px dashed #a78bfa' : '3px solid #667eea';
                 const opacity = u.is_partial ? '0.75' : '1';
                 const liveBadge = u.is_partial
@@ -2029,7 +2065,7 @@ Example:
                     : '';
                 return `
                     <div style="margin-bottom: 15px; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; border-left: ${border}; color: white; opacity: ${opacity}; transition: opacity 0.2s ease, border-left 0.2s ease;">
-                        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 4px;">[${time}]${liveBadge}</div>
+                        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 6px;">[${time}]${liveBadge}</div>
                         ${segmentsHtml}
                     </div>
                 `;
@@ -2250,11 +2286,15 @@ Example:
                     document.getElementById('maxAudioLength').value = thresholds.max_audio_length;
                     document.getElementById('silenceThreshold').value = thresholds.silence_threshold;
                     document.getElementById('silenceChunks').value = thresholds.silence_chunks;
+                    if (thresholds.partial_interval_sec !== undefined) {
+                        document.getElementById('partialInterval').value = thresholds.partial_interval_sec;
+                    }
 
                     updateThresholdDisplay('minAudioLength');
                     updateThresholdDisplay('maxAudioLength');
                     updateThresholdDisplay('silenceThreshold');
                     updateThresholdDisplay('silenceChunks');
+                    updateThresholdDisplay('partialInterval');
                 });
         }
 
@@ -2309,7 +2349,7 @@ Example:
 
             if (id === 'silenceThreshold') {
                 displayElement.textContent = parseFloat(value).toFixed(3);
-            } else if (id === 'minAudioLength' || id === 'maxAudioLength') {
+            } else if (id === 'minAudioLength' || id === 'maxAudioLength' || id === 'partialInterval') {
                 displayElement.textContent = parseFloat(value).toFixed(1);
             } else {
                 displayElement.textContent = value;
@@ -2329,7 +2369,8 @@ Example:
                 min_audio_length: parseFloat(document.getElementById('minAudioLength').value),
                 max_audio_length: parseFloat(document.getElementById('maxAudioLength').value),
                 silence_threshold: parseFloat(document.getElementById('silenceThreshold').value),
-                silence_chunks: parseInt(document.getElementById('silenceChunks').value)
+                silence_chunks: parseInt(document.getElementById('silenceChunks').value),
+                partial_interval_sec: parseFloat(document.getElementById('partialInterval').value)
             };
 
             // Get selected device

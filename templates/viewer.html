@@ -839,27 +839,51 @@
                     timeDiv.appendChild(liveTag);
                 }
 
-                // Wrap all segments in a vertical column so the outer
-                // .translation-item (display:flex, row) keeps time on the side
-                // and the body stacks speaker+text pairs vertically.
+                // Group consecutive same-speaker segments so the speaker name
+                // is shown once, with each sentence as a bullet underneath.
+                const groups = [];
+                utterance.segments.forEach(seg => {
+                    const last = groups[groups.length - 1];
+                    if (last && last.speaker === seg.speaker) {
+                        last.segs.push(seg);
+                    } else {
+                        groups.push({ speaker: seg.speaker, segs: [seg] });
+                    }
+                });
+
                 const bodyDiv = document.createElement('div');
                 bodyDiv.className = 'body';
-                bodyDiv.style.cssText = 'display:flex; flex-direction:column; gap:8px; flex:1; min-width:0;';
+                bodyDiv.style.cssText = 'display:flex; flex-direction:column; gap:10px; flex:1; min-width:0;';
 
-                utterance.segments.forEach(seg => {
-                    const segDiv = document.createElement('div');
-                    if (seg.speaker) {
+                groups.forEach(group => {
+                    const groupDiv = document.createElement('div');
+                    if (group.speaker) {
                         const speakerDiv = document.createElement('div');
                         speakerDiv.className = 'speaker';
-                        speakerDiv.style.cssText = 'font-weight:600; color:#8b5cf6; font-size:13px; margin-bottom:2px;';
-                        speakerDiv.textContent = seg.speaker;
-                        segDiv.appendChild(speakerDiv);
+                        speakerDiv.style.cssText = 'font-weight:600; color:#8b5cf6; font-size:13px; margin-bottom:4px;';
+                        speakerDiv.textContent = group.speaker;
+                        groupDiv.appendChild(speakerDiv);
                     }
-                    const textDiv = document.createElement('div');
-                    textDiv.className = 'text';
-                    textDiv.textContent = seg.text;
-                    segDiv.appendChild(textDiv);
-                    bodyDiv.appendChild(segDiv);
+                    const ul = document.createElement('ul');
+                    ul.style.cssText = 'margin:0; padding-left:0; list-style:none;';
+                    group.segs.forEach(seg => {
+                        const li = document.createElement('li');
+                        li.style.cssText = 'display:flex; gap:8px; align-items:baseline; margin-bottom:2px;';
+                        const absMs = utterance.timestamp + (seg.start || 0) * 1000;
+                        const d = new Date(absMs);
+                        const ss = String(d.getSeconds()).padStart(2, '0');
+                        const tsSpan = document.createElement('span');
+                        tsSpan.style.cssText = 'color:#6b7280; font-size:11px; font-variant-numeric:tabular-nums; flex-shrink:0; min-width:24px;';
+                        tsSpan.textContent = `:${ss}`;
+                        const textSpan = document.createElement('span');
+                        textSpan.className = 'text';
+                        textSpan.textContent = seg.text;
+                        li.appendChild(tsSpan);
+                        li.appendChild(textSpan);
+                        ul.appendChild(li);
+                    });
+                    groupDiv.appendChild(ul);
+                    bodyDiv.appendChild(groupDiv);
                 });
 
                 itemDiv.appendChild(bodyDiv);

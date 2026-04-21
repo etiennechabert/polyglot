@@ -346,10 +346,10 @@ _pending_speaker_switch = False
 # Maximum batch length when bot is connected (gives Whisper more context per speaker turn).
 BOT_MAX_BATCH_SEC = 60
 # Partial (streaming) transcription state. While a speaker keeps talking we
-# re-transcribe the growing buffer every PARTIAL_INTERVAL_SEC and emit an
-# is_partial=true WS payload keyed by _current_utterance_id; the final flush
-# emits is_partial=false with the same id so the frontend replaces the row.
-PARTIAL_INTERVAL_SEC = 10
+# re-transcribe the growing buffer every audio_thresholds["partial_interval_sec"]
+# and emit an is_partial=true WS payload keyed by _current_utterance_id; the
+# final flush emits is_partial=false with the same id so the frontend replaces
+# the row. The interval is runtime-mutable via /api/thresholds.
 _current_utterance_id = None
 _last_partial_ts = 0.0
 
@@ -1923,15 +1923,17 @@ def process_audio():
                 _current_utterance_id = uuid.uuid4().hex[:12]
                 _last_partial_ts = time.time()
 
-            # Fire a partial transcription tick every PARTIAL_INTERVAL_SEC while
-            # the buffer keeps growing. Skips when a final is already running —
-            # they'd contend on the GPU lock and a full flush is imminent anyway.
+            # Fire a partial transcription tick every partial_interval_sec
+            # while the buffer keeps growing. Skips when a final is already
+            # running — they'd contend on the GPU lock and a full flush is
+            # imminent anyway. The interval is runtime-mutable.
+            partial_interval = float(audio_thresholds.get("partial_interval_sec", 5))
             if (
                 bot_mode
                 and _current_utterance_id is not None
                 and not is_processing
                 and len(buffer) >= min_chunks
-                and (time.time() - _last_partial_ts) >= PARTIAL_INTERVAL_SEC
+                and (time.time() - _last_partial_ts) >= partial_interval
             ):
                 _last_partial_ts = time.time()
                 audio_snapshot = np.concatenate(list(buffer), axis=0).flatten().astype(np.float32)

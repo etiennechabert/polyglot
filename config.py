@@ -238,6 +238,10 @@ class Config:
             "source_language_auto_detect": cls.SOURCE_LANGUAGE_AUTO_DETECT,
         }
 
+    # Interval between streaming partial transcriptions while a speaker keeps
+    # talking. Runtime-mutable via /api/thresholds.
+    PARTIAL_INTERVAL_SEC = float(os.getenv("PARTIAL_INTERVAL_SEC", "5"))
+
     @classmethod
     def get_audio_thresholds(cls):
         """Get audio detection thresholds as dict"""
@@ -246,4 +250,5 @@ class Config:
             "max_audio_length": cls.MAX_AUDIO_LENGTH,
             "silence_threshold": cls.SILENCE_THRESHOLD,
             "silence_chunks": cls.SILENCE_CHUNKS,
+            "partial_interval_sec": cls.PARTIAL_INTERVAL_SEC,
         }
