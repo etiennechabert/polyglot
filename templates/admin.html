@@ -580,16 +580,6 @@
                     <div class="status-dot listening"></div>
                     <span>🔴 LIVE</span>
                 </div>
-                <div class="audio-visualizer" id="audioVisualizer" style="display: none;">
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                    <div class="audio-bar"></div>
-                </div>
                 <button id="startBtn">▶️ Start Listening</button>
                 <button id="stopBtn" disabled>⏹️ Stop</button>
                 <button id="settingsBtn">⚙️ Settings</button>
@@ -597,8 +587,8 @@
             </div>
         </header>
 
-        <!-- Audio Visualization, Thresholds, and Viewer Stats - 3 Column Layout -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+        <!-- Audio Waveform + Thresholds + Viewer Stats - 3 Column Layout -->
+        <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-bottom: 8px;">
             <!-- Column 1: Audio Waveform -->
             <div style="background: rgba(0, 0, 0, 0.95); color: #00ff41; padding: 12px; border-radius: 10px; border: 1px solid rgba(0, 255, 65, 0.2);">
                 <h3 style="color: #00ff41; margin-bottom: 10px; font-size: 12px; font-family: 'Courier New', monospace; letter-spacing: 2px; opacity: 0.8;">AUDIO SIGNAL</h3>
@@ -643,8 +633,8 @@
                     </div>
                 </div>
 
-                <!-- Silence Counter Bar -->
-                <div style="margin-bottom: 10px;">
+                <!-- Silence Counter Bar (hidden in bot mode — only drives mic-mode flush) -->
+                <div id="silenceRow" style="margin-bottom: 10px;">
                     <div style="display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-bottom: 4px;">
                         <span>SILENCE</span>
                         <span><span id="debugSilenceCounter">0</span> / <span id="debugSilenceChunksReq">-</span></span>
@@ -658,7 +648,7 @@
                 <div>
                     <div style="display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-bottom: 4px;">
                         <span>BUFFER</span>
-                        <span><span id="debugBufferChunks">0</span> (<span id="debugMinChunks">-</span>-<span id="debugMaxChunks">-</span>)</span>
+                        <span><span id="debugBufferSeconds">0.0</span>s / 60s</span>
                     </div>
                     <div style="height: 20px; background: #1a1a1a; border-radius: 10px; overflow: hidden; position: relative;">
                         <div id="bufferBar" style="height: 100%; background: linear-gradient(90deg, #8b5cf6 0%, #a78bfa 100%); width: 0%; transition: width 0.2s ease; box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);"></div>
@@ -681,7 +671,7 @@
         </div>
 
         <!-- System Stats Row -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+        <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-bottom: 8px;">
             <!-- VRAM Usage Chart -->
             <div style="background: rgba(0, 0, 0, 0.9); color: white; padding: 12px; border-radius: 10px;">
                 <h3 style="margin-bottom: 10px; color: #f59e0b; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
@@ -692,7 +682,7 @@
                     <div style="flex: 1; height: 140px;">
                         <canvas id="vramChart"></canvas>
                     </div>
-                    <div id="vramLegend" style="font-size: 10px; min-width: 180px;">
+                    <div id="vramLegend" style="font-size: 10px; min-width: 140px; flex-shrink: 0;">
                         <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;" title="Whisper model">
                             <span style="width: 10px; height: 10px; background: #3b82f6; border-radius: 2px; flex-shrink: 0;"></span>
                             <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" id="modelWhisperName">Whisper</span>
@@ -771,9 +761,32 @@
             <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
                     <h2 style="margin: 0;">📝 Transcript</h2>
-                    <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
-                        Lag: <span id="adminLagSeconds">0</span>s
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span id="botStatusBadge" style="font-size: 11px; padding: 3px 10px; border-radius: 12px; background: #374151; color: #9ca3af; display: none;">Bot disconnected</span>
+                        <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
+                            Lag: <span id="adminLagSeconds">0</span>s
+                        </div>
                     </div>
+                </div>
+                <!-- Live "currently speaking" banner -->
+                <div id="activeSpeakerBanner" style="display: none; margin-bottom: 8px; padding: 8px 12px; background: linear-gradient(90deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05)); border-radius: 8px; border: 1px solid rgba(34,197,94,0.4); flex-shrink: 0; font-size: 13px; color: #22c55e; font-weight: 600;">
+                    <span style="display: inline-block; width: 8px; height: 8px; background: #22c55e; border-radius: 50%; margin-right: 8px; animation: pulse 1.5s infinite;"></span>
+                    <span id="activeSpeakerText">—</span>
+                </div>
+
+                <!-- Meet bot control: enter a Meet URL/ID and start/stop the bot -->
+                <div id="meetBotControls" style="margin-bottom: 8px; padding: 10px 12px; background: rgba(255,255,255,0.04); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0; display: flex; gap: 8px; align-items: center;">
+                    <input id="meetUrlInput" type="text" placeholder="meet.google.com/xxx-yyyy-zzz or just xxx-yyyy-zzz"
+                           style="flex: 1; padding: 6px 10px; font-size: 12px; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; outline: none;">
+                    <button id="startBotBtn" onclick="startBot()"
+                            style="padding: 6px 14px; font-size: 12px; background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); border: none; color: white; cursor: pointer; border-radius: 6px; font-weight: 600;">🤖 Start bot</button>
+                    <button id="stopBotBtn" onclick="stopBot()" style="display: none; padding: 6px 14px; font-size: 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border: none; color: white; cursor: pointer; border-radius: 6px; font-weight: 600;">⏹ Stop bot</button>
+                </div>
+
+                <!-- Meet participant roster (shown when bot is connected) -->
+                <div id="meetRosterPanel" style="display: none; margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;">
+                    <div style="font-size: 11px; color: #9ca3af; margin-bottom: 4px;">PARTICIPANTS</div>
+                    <ul id="meetRosterList" style="margin: 0; padding: 0; list-style: none; max-height: 80px; overflow-y: auto; font-size: 12px;"></ul>
                 </div>
                 <div id="transcriptContent" class="translation-content" style="font-size: 16px; line-height: 1.7; flex: 1; overflow-y: auto;">
                     <div class="empty-state">
@@ -1801,26 +1814,25 @@ Example:
                     }
                 }
 
-                // Update buffer stats and bar
-                const debugBufferChunks = document.getElementById('debugBufferChunks');
-                const debugMinChunks = document.getElementById('debugMinChunks');
-                const debugMaxChunks = document.getElementById('debugMaxChunks');
-                if (debugBufferChunks) debugBufferChunks.textContent = data.buffer_chunks;
-                if (debugMinChunks) debugMinChunks.textContent = data.min_chunks;
-                if (debugMaxChunks) debugMaxChunks.textContent = data.max_chunks;
+                // Buffer: display in seconds, scale bar against a fixed 60 s cap
+                // (matches BOT_MAX_BATCH_SEC on the server). 1 chunk = 1024/16000 s.
+                const CHUNK_SEC = 1024 / 16000;
+                const BUFFER_MAX_SEC = 60;
+                const bufferSeconds = (data.buffer_chunks || 0) * CHUNK_SEC;
+                const minSeconds = (data.min_chunks || 0) * CHUNK_SEC;
+                const maxSeconds = Math.min(BUFFER_MAX_SEC, (data.max_chunks || 0) * CHUNK_SEC);
 
-                // Update buffer bar (scale between min and max)
-                const bufferPercent = data.max_chunks > 0
-                    ? Math.min(100, (data.buffer_chunks / data.max_chunks) * 100)
-                    : 0;
+                const debugBufferSeconds = document.getElementById('debugBufferSeconds');
+                if (debugBufferSeconds) debugBufferSeconds.textContent = bufferSeconds.toFixed(1);
+
+                const bufferPercent = Math.min(100, (bufferSeconds / BUFFER_MAX_SEC) * 100);
                 const bufferBar = document.getElementById('bufferBar');
                 if (bufferBar) {
                     bufferBar.style.width = bufferPercent + '%';
 
-                    // Change color based on buffer state
-                    if (data.buffer_chunks >= data.max_chunks) {
+                    if (bufferSeconds >= maxSeconds) {
                         bufferBar.style.background = 'linear-gradient(90deg, #ef4444 0%, #f87171 100%)'; // Red when full
-                    } else if (data.buffer_chunks >= data.min_chunks) {
+                    } else if (bufferSeconds >= minSeconds) {
                         bufferBar.style.background = 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)'; // Yellow when at min
                     } else {
                         bufferBar.style.background = 'linear-gradient(90deg, #8b5cf6 0%, #a78bfa 100%)'; // Purple otherwise
@@ -1838,6 +1850,85 @@ Example:
                 void debugPanel.offsetWidth;
                 debugPanel.classList.add('debug-flash');
             }
+        });
+
+        // ── Meet bot events ─────────────────────────────────────────────────
+
+        socket.on('bot_status', (data) => {
+            const badge = document.getElementById('botStatusBadge');
+            const rosterPanel = document.getElementById('meetRosterPanel');
+            const startBtn = document.getElementById('startBotBtn');
+            const stopBtn = document.getElementById('stopBotBtn');
+            const silenceRow = document.getElementById('silenceRow');
+            if (badge) {
+                badge.style.display = 'inline-block';
+                badge.textContent = data.connected ? '🤖 Bot connected' : '🤖 Bot disconnected';
+                badge.style.background = data.connected ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)';
+                badge.style.color = data.connected ? '#22c55e' : '#ef4444';
+                badge.style.border = `1px solid ${data.connected ? '#22c55e' : '#ef4444'}`;
+            }
+            if (rosterPanel) rosterPanel.style.display = data.connected ? 'block' : 'none';
+            if (startBtn) startBtn.style.display = data.connected ? 'none' : 'inline-block';
+            if (stopBtn)  stopBtn.style.display  = data.connected ? 'inline-block' : 'none';
+            // Silence detection is only used in mic-mode — hide its bar when the bot is driving batching.
+            if (silenceRow) silenceRow.style.display = data.connected ? 'none' : 'block';
+        });
+
+        // Start / stop the Meet bot via backend subprocess.
+        function normalizeMeetUrl(raw) {
+            const s = (raw || '').trim();
+            if (!s) return '';
+            if (s.startsWith('http')) return s;
+            if (s.includes('meet.google.com')) return 'https://' + s.replace(/^\/+/, '');
+            // Just a meeting ID like "stu-tyen-aed"
+            if (/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(s)) return 'https://meet.google.com/' + s;
+            return s;
+        }
+        function startBot() {
+            const input = document.getElementById('meetUrlInput');
+            const url = normalizeMeetUrl(input?.value || '');
+            if (!url) { alert('Enter a Meet URL or meeting ID (e.g. xxx-yyyy-zzz)'); return; }
+            socket.emit('start_meet_bot', { url });
+        }
+        function stopBot() { socket.emit('stop_meet_bot'); }
+
+        socket.on('meet_bot_control_result', (data) => {
+            if (!data.ok) alert(`Bot control failed: ${data.error || 'unknown'}`);
+        });
+
+        socket.on('active_speakers', (data) => {
+            const banner = document.getElementById('activeSpeakerBanner');
+            const text = document.getElementById('activeSpeakerText');
+            if (!banner || !text) return;
+            const names = (data && data.speakers) || [];
+            if (names.length === 0) {
+                banner.style.display = 'none';
+            } else {
+                banner.style.display = 'block';
+                text.textContent = `Speaking: ${names.join(', ')}`;
+            }
+        });
+
+        socket.on('meet_roster', (data) => {
+            const el = document.getElementById('meetRosterList');
+            const rosterPanel = document.getElementById('meetRosterPanel');
+            if (!el) return;
+            el.innerHTML = (data.participants || [])
+                .map(n => `<li style="padding:2px 0;color:#ccc;">${n}</li>`)
+                .join('');
+            if (rosterPanel && (data.participants || []).length > 0)
+                rosterPanel.style.display = 'block';
+        });
+
+        socket.on('rename_speaker', (data) => {
+            // Retroactively replace SPEAKER_XX labels in the transcript panel.
+            const tc = document.getElementById('transcriptContent');
+            if (!tc) return;
+            const re = new RegExp(data.speaker_id.replace('_', '_'), 'g');
+            tc.innerHTML = tc.innerHTML.replace(
+                new RegExp(data.speaker_id, 'g'),
+                data.name
+            );
         });
 
         function updateStatus() {
@@ -1859,7 +1950,7 @@ Example:
                 statusEl.innerHTML = '<span class="status-dot"></span><span>Listening</span>';
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
-                visualizer.style.display = 'inline-flex';
+                visualizer.style.display = 'flex';
                 console.log('[updateStatus] Set stopBtn.disabled = false');
             } else {
                 statusEl.className = 'status idle';

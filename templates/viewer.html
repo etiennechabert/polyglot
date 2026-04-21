@@ -624,6 +624,11 @@
                     <button class="change-language-btn" onclick="changeLanguage()">Change</button>
                 </div>
             </div>
+            <!-- Live "currently speaking" banner -->
+            <div id="activeSpeakerBanner" style="display: none; margin: 8px 12px 0; padding: 10px 14px; background: linear-gradient(90deg, rgba(139,92,246,0.18), rgba(139,92,246,0.05)); border-radius: 10px; border: 1px solid rgba(139,92,246,0.45); font-size: 14px; color: #a78bfa; font-weight: 600;">
+                <span style="display: inline-block; width: 9px; height: 9px; background: #a78bfa; border-radius: 50%; margin-right: 10px; animation: pulse 1.5s infinite;"></span>
+                <span id="activeSpeakerText">—</span>
+            </div>
             <div class="panel-content" id="translationsContainer">
                 <div class="no-data">
                     <div class="icon">...</div>
@@ -825,6 +830,7 @@
                 // Apply new-message class to the newest items (at the start after reverse)
                 const isNew = index < newCount;
                 itemDiv.className = isNew ? 'translation-item new-message' : 'translation-item';
+                if (item.speaker) itemDiv.dataset.speaker = item.speaker;
 
                 const timeDiv = document.createElement('div');
                 timeDiv.className = 'time';
@@ -834,6 +840,15 @@
                     minute: '2-digit',
                     hour12: false
                 });
+
+                // Speaker name line (prominent, colored)
+                if (item.speaker) {
+                    const speakerDiv = document.createElement('div');
+                    speakerDiv.className = 'speaker';
+                    speakerDiv.style.cssText = 'font-weight:600; color:#8b5cf6; font-size:13px; margin-bottom:2px;';
+                    speakerDiv.textContent = item.speaker;
+                    itemDiv.appendChild(speakerDiv);
+                }
 
                 const textDiv = document.createElement('div');
                 textDiv.className = 'text';
@@ -896,6 +911,7 @@
                 newSegments.forEach(segment => {
                     displayedTranslations.push({
                         text: segment.text,
+                        speaker: segment.speaker || null,
                         timestamp: Date.now()
                     });
                 });
@@ -1044,6 +1060,30 @@
         socket.on('disconnect', () => {
             document.getElementById('connectionDot').className = 'status-dot disconnected';
             document.getElementById('connectionStatus').textContent = 'Disconnected';
+        });
+
+        // Retroactively rename SPEAKER_XX labels to real names for already-displayed segments.
+        socket.on('rename_speaker', (data) => {
+            if (!data || !data.speaker_id || !data.name) return;
+            let dirty = false;
+            displayedTranslations.forEach(item => {
+                if (item.speaker === data.speaker_id) { item.speaker = data.name; dirty = true; }
+            });
+            if (dirty) renderTranslations(0);
+        });
+
+        // Live "who is currently speaking" banner.
+        socket.on('active_speakers', (data) => {
+            const banner = document.getElementById('activeSpeakerBanner');
+            const text = document.getElementById('activeSpeakerText');
+            if (!banner || !text) return;
+            const names = (data && data.speakers) || [];
+            if (names.length === 0) {
+                banner.style.display = 'none';
+            } else {
+                banner.style.display = 'block';
+                text.textContent = `Speaking: ${names.join(', ')}`;
+            }
         });
 
         socket.io.on('reconnect_attempt', (attemptNumber) => {
