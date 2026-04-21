@@ -1789,20 +1789,25 @@ def process_audio():
 
             buffer.append(chunk)
 
-            # Speaker-switch batching (bot mode): when the bot reports a new active
-            # speaker, flush the current batch so each turn is transcribed as one unit.
-            # Extend max length to BOT_MAX_BATCH_SEC so one speaker can ramble up to 1 min.
+            # Bot mode: only flush on speaker switch or 60 s cap. No silence
+            # detection — a speaker's natural pauses emit speaker_end/start
+            # toggles and we explicitly do NOT flush on those. Mic-only mode
+            # falls back to the original level-based silence heuristic.
             global _pending_speaker_switch
-            bot_active = bot_connected and _current_bot_speaker is not None
-            if bot_active:
+            bot_mode = bot_connected
+            if bot_mode:
                 max_chunks = int(actual_sample_rate * BOT_MAX_BATCH_SEC / CHUNK_SIZE)
 
-            speaker_switched = bot_active and _pending_speaker_switch and len(buffer) >= min_chunks
+            speaker_switched = bot_mode and _pending_speaker_switch and len(buffer) >= min_chunks
             if speaker_switched:
                 _pending_speaker_switch = False
 
-            # Process when we detect end of sentence (silence after minimum audio) OR max buffer reached
-            silence_detected = len(buffer) >= min_chunks and silence_counter >= audio_thresholds["silence_chunks"]
+            # Level-based silence detection — only used when bot isn't driving batching.
+            silence_detected = (
+                not bot_mode
+                and len(buffer) >= min_chunks
+                and silence_counter >= audio_thresholds["silence_chunks"]
+            )
             max_length_reached = len(buffer) >= max_chunks
             should_process = silence_detected or max_length_reached or speaker_switched
 
@@ -2710,11 +2715,103 @@ if Config.MEET_BOT_ENABLED:
                 _pending_speaker_switch = True
             _current_bot_speaker = name
             log(f"Speaking: {name}", "BOT")
+            _broadcast_active_speakers()
 
         elif ev_type == "speaker_end":
             start = _active_speaker_starts.pop(name, ts_ms - 1000)
             speaker_timeline.append((start, ts_ms, name))
             log(f"Segment: {name} {ts_ms - start} ms", "BOT")
+            # Don't flush here — a single speaker's short pauses emit
+            # speaker_end/speaker_start toggles, so flushing on end would
+            # chop their turn into tiny fragments. We only flush when a
+            # DIFFERENT speaker starts (speaker_switched) or the 60 s cap
+            # is reached. _current_bot_speaker stays as the last name so
+            # the same speaker resuming does not trigger a switch.
+            _broadcast_active_speakers()
+
+
+def _broadcast_active_speakers():
+    """Push the current set of speaking participants to admin + all viewers."""
+    names = list(_active_speaker_starts.keys())
+    payload = {"speakers": names, "wall_clock_ms": int(time.time() * 1000)}
+    socketio.emit("active_speakers", payload, room="admin")
+    for lang_code, count in active_language_viewers.items():
+        if count > 0:
+            socketio.emit("active_speakers", payload, room=f"lang_{lang_code}")
+
+
+# ── Admin-triggered bot spawning ─────────────────────────────────────────────
+# Tracks the currently running Meet bot subprocess so we can start/stop it
+# from the admin panel. Only one bot instance is supported at a time.
+_meet_bot_process = None
+_meet_bot_lock = threading.Lock()
+
+
+def _bot_script_path():
+    return Path(__file__).parent / "meet-bot" / "index.js"
+
+
+@socketio.on("start_meet_bot")
+def handle_start_meet_bot(data):
+    """Spawn the Meet bot pointing at the given URL. Admin-only."""
+    global _meet_bot_process
+
+    url = (data or {}).get("url", "").strip()
+    if not url.startswith("http"):
+        emit("meet_bot_control_result", {"ok": False, "error": "URL must start with http(s)://"})
+        return
+
+    with _meet_bot_lock:
+        # If a bot is already running, refuse to start another.
+        if _meet_bot_process is not None and _meet_bot_process.poll() is None:
+            emit("meet_bot_control_result", {"ok": False, "error": "Bot already running — stop it first"})
+            return
+
+        script = _bot_script_path()
+        if not script.exists():
+            emit("meet_bot_control_result", {"ok": False, "error": f"Bot script not found at {script}"})
+            return
+
+        import subprocess
+        try:
+            _meet_bot_process = subprocess.Popen(
+                ["node", str(script),
+                 "--url", url,
+                 "--polyglot-url", "http://localhost:5000",
+                 "--headful"],
+                cwd=str(script.parent),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+            )
+            log(f"Spawned Meet bot (pid={_meet_bot_process.pid}) → {url}", "BOT")
+            emit("meet_bot_control_result", {"ok": True, "pid": _meet_bot_process.pid})
+        except Exception as e:
+            log(f"Failed to spawn bot: {e}", "BOT")
+            emit("meet_bot_control_result", {"ok": False, "error": str(e)})
+
+
+@socketio.on("stop_meet_bot")
+def handle_stop_meet_bot():
+    """Terminate the running Meet bot subprocess."""
+    global _meet_bot_process
+    with _meet_bot_lock:
+        if _meet_bot_process is None or _meet_bot_process.poll() is not None:
+            emit("meet_bot_control_result", {"ok": False, "error": "No bot running"})
+            _meet_bot_process = None
+            return
+        try:
+            _meet_bot_process.terminate()
+            try:
+                _meet_bot_process.wait(timeout=5)
+            except Exception:
+                _meet_bot_process.kill()
+            log(f"Stopped Meet bot subprocess", "BOT")
+            _meet_bot_process = None
+            emit("meet_bot_control_result", {"ok": True})
+        except Exception as e:
+            emit("meet_bot_control_result", {"ok": False, "error": str(e)})
 
 
 if __name__ == "__main__":
