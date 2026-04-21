@@ -624,11 +624,6 @@
                     <button class="change-language-btn" onclick="changeLanguage()">Change</button>
                 </div>
             </div>
-            <!-- Live "currently speaking" banner -->
-            <div id="activeSpeakerBanner" style="display: none; margin: 8px 12px 0; padding: 10px 14px; background: linear-gradient(90deg, rgba(139,92,246,0.18), rgba(139,92,246,0.05)); border-radius: 10px; border: 1px solid rgba(139,92,246,0.45); font-size: 14px; color: #a78bfa; font-weight: 600;">
-                <span style="display: inline-block; width: 9px; height: 9px; background: #a78bfa; border-radius: 50%; margin-right: 10px; animation: pulse 1.5s infinite;"></span>
-                <span id="activeSpeakerText">—</span>
-            </div>
             <div class="panel-content" id="translationsContainer">
                 <div class="no-data">
                     <div class="icon">...</div>
@@ -721,10 +716,9 @@
             const urlPassword = urlParams.get('p');
 
             if (urlPassword) {
-                // Auto-authenticate with URL password
+                // Auto-authenticate with URL password. Keep ?p=… in the URL
+                // so a refresh re-authenticates without re-prompting.
                 socket.emit('viewer_authenticate', { password: urlPassword });
-                // Clean URL without reloading (remove password from visible URL for security)
-                window.history.replaceState({}, document.title, window.location.pathname);
             } else {
                 // Check for stored authentication
                 const storedAuth = sessionStorage.getItem('viewer_authenticated');
@@ -823,45 +817,83 @@
             const container = document.getElementById('translationsContainer');
             const fragment = document.createDocumentFragment();
 
-            // Render in reverse order (newest first at top)
+            // Render newest first.
             const reversed = [...displayedTranslations].reverse();
-            reversed.forEach((item, index) => {
+            reversed.forEach((utterance, index) => {
                 const itemDiv = document.createElement('div');
-                // Apply new-message class to the newest items (at the start after reverse)
                 const isNew = index < newCount;
                 itemDiv.className = isNew ? 'translation-item new-message' : 'translation-item';
-                if (item.speaker) itemDiv.dataset.speaker = item.speaker;
+                if (utterance.is_partial) itemDiv.classList.add('partial');
+                itemDiv.dataset.utteranceId = utterance.utterance_id;
 
                 const timeDiv = document.createElement('div');
                 timeDiv.className = 'time';
-                const time = new Date(item.timestamp);
+                const time = new Date(utterance.timestamp);
                 timeDiv.textContent = time.toLocaleTimeString('en-US', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: false
+                    hour: '2-digit', minute: '2-digit', hour12: false,
                 });
-
-                // Speaker name line (prominent, colored)
-                if (item.speaker) {
-                    const speakerDiv = document.createElement('div');
-                    speakerDiv.className = 'speaker';
-                    speakerDiv.style.cssText = 'font-weight:600; color:#8b5cf6; font-size:13px; margin-bottom:2px;';
-                    speakerDiv.textContent = item.speaker;
-                    itemDiv.appendChild(speakerDiv);
+                if (utterance.is_partial) {
+                    const liveTag = document.createElement('span');
+                    liveTag.textContent = ' ● live';
+                    liveTag.style.cssText = 'color:#a78bfa; margin-left:6px; font-style:italic;';
+                    timeDiv.appendChild(liveTag);
                 }
 
-                const textDiv = document.createElement('div');
-                textDiv.className = 'text';
-                textDiv.textContent = item.text;
+                // Group consecutive same-speaker segments so the speaker name
+                // is shown once, with each sentence as a bullet underneath.
+                const groups = [];
+                utterance.segments.forEach(seg => {
+                    const last = groups[groups.length - 1];
+                    if (last && last.speaker === seg.speaker) {
+                        last.segs.push(seg);
+                    } else {
+                        groups.push({ speaker: seg.speaker, segs: [seg] });
+                    }
+                });
 
+                const bodyDiv = document.createElement('div');
+                bodyDiv.className = 'body';
+                bodyDiv.style.cssText = 'display:flex; flex-direction:column; gap:10px; flex:1; min-width:0;';
+
+                groups.forEach(group => {
+                    const groupDiv = document.createElement('div');
+                    if (group.speaker) {
+                        const speakerDiv = document.createElement('div');
+                        speakerDiv.className = 'speaker';
+                        speakerDiv.style.cssText = 'font-weight:600; color:#8b5cf6; font-size:13px; margin-bottom:4px;';
+                        speakerDiv.textContent = group.speaker;
+                        groupDiv.appendChild(speakerDiv);
+                    }
+                    const ul = document.createElement('ul');
+                    ul.style.cssText = 'margin:0; padding-left:0; list-style:none;';
+                    group.segs.forEach(seg => {
+                        const li = document.createElement('li');
+                        li.style.cssText = 'display:flex; gap:8px; align-items:baseline; margin-bottom:2px;';
+                        const absMs = utterance.timestamp + (seg.start || 0) * 1000;
+                        const d = new Date(absMs);
+                        const ss = String(d.getSeconds()).padStart(2, '0');
+                        const tsSpan = document.createElement('span');
+                        tsSpan.style.cssText = 'color:#6b7280; font-size:11px; font-variant-numeric:tabular-nums; flex-shrink:0; min-width:24px;';
+                        tsSpan.textContent = `:${ss}`;
+                        const textSpan = document.createElement('span');
+                        textSpan.className = 'text';
+                        textSpan.textContent = seg.text;
+                        li.appendChild(tsSpan);
+                        li.appendChild(textSpan);
+                        ul.appendChild(li);
+                    });
+                    groupDiv.appendChild(ul);
+                    bodyDiv.appendChild(groupDiv);
+                });
+
+                itemDiv.appendChild(bodyDiv);
                 itemDiv.appendChild(timeDiv);
-                itemDiv.appendChild(textDiv);
+                if (utterance.is_partial) itemDiv.style.opacity = '0.75';
                 fragment.appendChild(itemDiv);
             });
 
             container.innerHTML = '';
             container.appendChild(fragment);
-            // Scroll to top to show newest content
             container.scrollTop = 0;
         }
 
@@ -902,28 +934,37 @@
             startViewerLagTimer();
         }
 
+        let _anonUtteranceCounter = 0;
         socket.on('new_translation', (data) => {
-            if (selectedLanguage && data.translated_segments && data.translated_segments[selectedLanguage]) {
-                // Reset lag timer on new translation
-                resetViewerLagTimer();
+            if (!selectedLanguage || !data.translated_segments || !data.translated_segments[selectedLanguage]) return;
 
-                const newSegments = data.translated_segments[selectedLanguage];
-                newSegments.forEach(segment => {
-                    displayedTranslations.push({
-                        text: segment.text,
-                        speaker: segment.speaker || null,
-                        timestamp: Date.now()
-                    });
-                });
+            resetViewerLagTimer();
 
-                // Keep newest, remove oldest from beginning
+            const uttId = data.utterance_id || `anon_${_anonUtteranceCounter++}`;
+            const segments = data.translated_segments[selectedLanguage].map(s => ({
+                speaker: s.speaker || null, text: s.text,
+            }));
+            const entry = {
+                utterance_id: uttId,
+                segments: segments,
+                is_partial: !!data.is_partial,
+                timestamp: Date.now(),
+            };
+
+            const existingIdx = displayedTranslations.findIndex(u => u.utterance_id === uttId);
+            let highlightCount = 0;
+            if (existingIdx >= 0) {
+                // Preserve original timestamp so partial-then-final doesn't reshuffle.
+                entry.timestamp = displayedTranslations[existingIdx].timestamp;
+                displayedTranslations[existingIdx] = entry;
+            } else {
+                displayedTranslations.push(entry);
+                highlightCount = 1;
                 if (displayedTranslations.length > MAX_TRANSLATIONS) {
                     displayedTranslations = displayedTranslations.slice(-MAX_TRANSLATIONS);
                 }
-
-                // Pass the count of new messages for highlighting
-                renderTranslations(newSegments.length);
             }
+            renderTranslations(highlightCount);
         });
 
         // Summary updates
@@ -1066,25 +1107,14 @@
         socket.on('rename_speaker', (data) => {
             if (!data || !data.speaker_id || !data.name) return;
             let dirty = false;
-            displayedTranslations.forEach(item => {
-                if (item.speaker === data.speaker_id) { item.speaker = data.name; dirty = true; }
-            });
+            for (const u of displayedTranslations) {
+                for (const seg of u.segments) {
+                    if (seg.speaker === data.speaker_id) { seg.speaker = data.name; dirty = true; }
+                }
+            }
             if (dirty) renderTranslations(0);
         });
 
-        // Live "who is currently speaking" banner.
-        socket.on('active_speakers', (data) => {
-            const banner = document.getElementById('activeSpeakerBanner');
-            const text = document.getElementById('activeSpeakerText');
-            if (!banner || !text) return;
-            const names = (data && data.speakers) || [];
-            if (names.length === 0) {
-                banner.style.display = 'none';
-            } else {
-                banner.style.display = 'block';
-                text.textContent = `Speaking: ${names.join(', ')}`;
-            }
-        });
 
         socket.io.on('reconnect_attempt', (attemptNumber) => {
             reconnectAttempts = attemptNumber;

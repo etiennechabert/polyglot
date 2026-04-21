@@ -11,6 +11,7 @@ import random
 import sys
 import threading
 import time
+import uuid
 import warnings
 import wave
 import webbrowser
@@ -344,6 +345,13 @@ _current_bot_speaker = None
 _pending_speaker_switch = False
 # Maximum batch length when bot is connected (gives Whisper more context per speaker turn).
 BOT_MAX_BATCH_SEC = 60
+# Partial (streaming) transcription state. While a speaker keeps talking we
+# re-transcribe the growing buffer every audio_thresholds["partial_interval_sec"]
+# and emit an is_partial=true WS payload keyed by _current_utterance_id; the
+# final flush emits is_partial=false with the same id so the frontend replaces
+# the row. The interval is runtime-mutable via /api/thresholds.
+_current_utterance_id = None
+_last_partial_ts = 0.0
 
 
 def load_transcript_segments(transcript_path):
@@ -1312,7 +1320,99 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
 
 
 @torch.inference_mode()
-def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None):
+def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_end_ts_ms):
+    """Streaming-style partial transcription.
+
+    Runs Whisper + translations on a growing buffer snapshot while a speaker
+    is still talking, then emits a WS payload with is_partial=true. Frontends
+    key segments by utterance_id and replace the row when the final pass
+    arrives with the same id. Skips diarization (uses speaker_hint directly),
+    skips transcript file write, skips summarization accumulation.
+    """
+    # Share the same GPU lock as the final path so Whisper calls serialise.
+    if Config.ENABLE_MODEL_ROTATION:
+        if not transcription_lock.acquire(blocking=False):
+            # Final pass is running — skip this tick; next one will retry.
+            return
+    else:
+        transcription_lock.acquire()
+
+    try:
+        audio_duration = len(audio_data) / SAMPLE_RATE
+        if np.abs(audio_data).mean() < Config.MIN_AUDIO_LEVEL:
+            return
+
+        result = transcription_pipe(audio_data)
+        full_transcript = (result["text"] if isinstance(result, dict) else str(result)).strip()
+        del result
+        if Config.DEVICE == "cuda":
+            torch.cuda.empty_cache()
+        if not full_transcript:
+            return
+
+        try:
+            source_lang = detect(full_transcript)
+        except LangDetectException:
+            source_lang = "en"
+
+        speaker = speaker_hint or "Speaker 1"
+        segment = {"text": full_transcript, "speaker": speaker, "start": 0.0, "end": audio_duration}
+        ws_payload = {
+            "transcript": full_transcript,
+            "source_language": source_lang,
+            "translations": {},
+            "timestamp": time.time(),
+            "segments": [segment],
+            "utterance_id": utterance_id,
+            "is_partial": True,
+        }
+        socketio.emit("new_translation", ws_payload, room="admin")
+        for lang_code, n in active_language_viewers.items():
+            if n > 0:
+                socketio.emit("new_translation", ws_payload, room=f"lang_{lang_code}")
+
+        # Translate per language and emit a second partial update with translated segments.
+        languages_to_translate = [
+            lang for lang in Config.TARGET_LANGUAGES
+            if active_language_viewers.get(lang["code"], 0) > 0 and lang["code"] != source_lang
+        ]
+        translated_segments_by_lang = {lang["code"]: [] for lang in languages_to_translate}
+        for lang_info in languages_to_translate:
+            translated = translate_text(full_transcript, source_lang, lang_info["code"])
+            translated_segments_by_lang[lang_info["code"]].append({
+                "text": translated, "speaker": speaker, "start": 0.0, "end": audio_duration,
+            })
+        if source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES] and \
+                active_language_viewers.get(source_lang, 0) > 0:
+            translated_segments_by_lang[source_lang] = [dict(segment)]
+
+        ws_payload_final = {
+            "transcript": full_transcript,
+            "source_language": source_lang,
+            "translated_segments": translated_segments_by_lang,
+            "timestamp": ws_payload["timestamp"],
+            "segments": [segment],
+            "utterance_id": utterance_id,
+            "is_partial": True,
+            "is_update": True,
+        }
+        socketio.emit("new_translation", ws_payload_final, room="admin")
+        for lang_code in translated_segments_by_lang:
+            if active_language_viewers.get(lang_code, 0) > 0:
+                socketio.emit("new_translation", ws_payload_final, room=f"lang_{lang_code}")
+
+        log(f"Partial {utterance_id[:6]} ({audio_duration:.1f}s): {full_transcript[:60]}{'...' if len(full_transcript) > 60 else ''}", "PARTIAL")
+    except Exception as e:
+        print(f"[PARTIAL] error: {e}")
+    finally:
+        try:
+            transcription_lock.release()
+        except RuntimeError:
+            pass
+
+
+@torch.inference_mode()
+def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, utterance_id=None):
     """Background thread for transcription and translation with speaker diarization"""
     global is_processing, all_meeting_segments
 
@@ -1575,6 +1675,8 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None):
             "translations": {},  # Empty for now
             "timestamp": time.time(),
             "segments": segments_with_speakers,
+            "utterance_id": utterance_id,
+            "is_partial": False,
             "is_initial": True,  # Flag to indicate translations are coming
         }
 
@@ -1655,6 +1757,8 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None):
             "translated_segments": translated_segments_by_lang,  # Per-segment translations
             "timestamp": ws_payload_initial["timestamp"],  # Use same timestamp
             "segments": segments_with_speakers,  # Original source segments
+            "utterance_id": utterance_id,
+            "is_partial": False,
             "is_update": True,  # Flag to indicate this is a translation update
         }
 
@@ -1723,6 +1827,15 @@ def process_audio():
 
                     # Add to buffer for next sentence
                     buffer.append(chunk)
+
+                    # Mint a fresh utterance_id for the next batch while the
+                    # previous final is still running. Without this, once we
+                    # exit is_processing the buffer already has many chunks and
+                    # the mint condition never fires → partials never trigger.
+                    global _current_utterance_id, _last_partial_ts
+                    if bot_connected and _current_utterance_id is None:
+                        _current_utterance_id = uuid.uuid4().hex[:12]
+                        _last_partial_ts = time.time()
 
                     # Update silence counter
                     is_silent = audio_level < audio_thresholds["silence_threshold"]
@@ -1802,6 +1915,36 @@ def process_audio():
             if speaker_switched:
                 _pending_speaker_switch = False
 
+            # Mint a fresh utterance_id if one isn't set (buffer just started
+            # fresh). The is_processing=True branch may have done this already
+            # if it collected chunks during a previous final — in that case
+            # this is a no-op.
+            if bot_mode and _current_utterance_id is None:
+                _current_utterance_id = uuid.uuid4().hex[:12]
+                _last_partial_ts = time.time()
+
+            # Fire a partial transcription tick every partial_interval_sec
+            # while the buffer keeps growing. Skips when a final is already
+            # running — they'd contend on the GPU lock and a full flush is
+            # imminent anyway. The interval is runtime-mutable.
+            partial_interval = float(audio_thresholds.get("partial_interval_sec", 5))
+            if (
+                bot_mode
+                and _current_utterance_id is not None
+                and not is_processing
+                and len(buffer) >= min_chunks
+                and (time.time() - _last_partial_ts) >= partial_interval
+            ):
+                _last_partial_ts = time.time()
+                audio_snapshot = np.concatenate(list(buffer), axis=0).flatten().astype(np.float32)
+                if actual_sample_rate != SAMPLE_RATE:
+                    audio_snapshot = resampy.resample(audio_snapshot, actual_sample_rate, SAMPLE_RATE)
+                threading.Thread(
+                    target=partial_transcribe_and_emit,
+                    args=(audio_snapshot, _current_utterance_id, _current_bot_speaker, _last_capture_ts_ms),
+                    daemon=True,
+                ).start()
+
             # Level-based silence detection — only used when bot isn't driving batching.
             silence_detected = (
                 not bot_mode
@@ -1857,10 +2000,15 @@ def process_audio():
                 # Snapshot the wall-clock anchor for Phase 5 speaker resolution.
                 batch_end_ts = _last_capture_ts_ms
 
+                # Capture the utterance_id for the final emit, then clear so the
+                # next batch mints a fresh one on its first chunk.
+                final_utt_id = _current_utterance_id
+                _current_utterance_id = None
+
                 # Launch background thread for transcription and translation
                 # This keeps the main loop responsive for WebSocket updates
                 processing_thread = threading.Thread(
-                    target=transcribe_and_translate, args=(audio_resampled, audio_duration, batch_end_ts), daemon=True
+                    target=transcribe_and_translate, args=(audio_resampled, audio_duration, batch_end_ts, final_utt_id), daemon=True
                 )
                 processing_thread.start()
 
@@ -1878,22 +2026,31 @@ def process_audio():
             continue
 
 
+def _no_cache(resp):
+    """Attach no-cache headers so the browser always fetches fresh HTML/CSS/JS.
+    Applied to the viewer and admin pages during active development."""
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @app.route("/")
 def index():
     """Redirect to viewer page by default"""
-    return render_template("viewer.html")
+    return _no_cache(app.make_response(render_template("viewer.html")))
 
 
 @app.route("/viewer")
 def viewer():
     """Serve the viewer page"""
-    return render_template("viewer.html")
+    return _no_cache(app.make_response(render_template("viewer.html")))
 
 
 @app.route("/admin")
 def admin():
     """Serve the admin page"""
-    return render_template("admin.html")
+    return _no_cache(app.make_response(render_template("admin.html")))
 
 
 @app.route("/api/config", methods=["GET"])
@@ -2207,6 +2364,14 @@ def handle_admin_authenticate(data):
         emit('viewer_stats', active_language_viewers)
         # Send current listening status
         emit('status', {'listening': is_listening})
+        # Replay the current Meet-bot state so a late-arriving admin tab
+        # knows whether a bot is already connected and which meeting URL.
+        emit('bot_status', {'connected': bot_connected, 'url': _meet_bot_url})
+        if bot_connected and meet_participants:
+            emit('meet_roster', {
+                'participants': list(meet_participants.keys()),
+                'bot_connected': True,
+            })
     else:
         emit('admin_authenticated', {'success': False, 'message': 'Invalid password'})
 
@@ -2649,7 +2814,16 @@ if Config.MEET_BOT_ENABLED:
         bot_connected = True
         log("Meet bot connected", "BOT")
         _open_bot_wav()
-        socketio.emit("bot_status", {"connected": True}, room="admin")
+        socketio.emit("bot_status", {"connected": True, "url": _meet_bot_url}, room="admin")
+
+    @socketio.on("bot_info", namespace="/meet_bot")
+    def bot_info(info):
+        """Receive self-report from the bot (meeting URL) and refresh admin status."""
+        global _meet_bot_url
+        url = (info or {}).get("url")
+        if url:
+            _meet_bot_url = url
+            socketio.emit("bot_status", {"connected": True, "url": url}, room="admin")
 
     @socketio.on("disconnect", namespace="/meet_bot")
     def bot_disconnect():
@@ -2662,7 +2836,7 @@ if Config.MEET_BOT_ENABLED:
         _active_speaker_starts.clear()
         _close_bot_wav()
         log("Meet bot disconnected", "BOT")
-        socketio.emit("bot_status", {"connected": False}, room="admin")
+        socketio.emit("bot_status", {"connected": False, "url": None}, room="admin")
 
     @socketio.on("audio_frame", namespace="/meet_bot")
     def bot_audio_frame(meta, data):
@@ -2744,6 +2918,7 @@ def _broadcast_active_speakers():
 # Tracks the currently running Meet bot subprocess so we can start/stop it
 # from the admin panel. Only one bot instance is supported at a time.
 _meet_bot_process = None
+_meet_bot_url = None
 _meet_bot_lock = threading.Lock()
 
 
@@ -2754,7 +2929,7 @@ def _bot_script_path():
 @socketio.on("start_meet_bot")
 def handle_start_meet_bot(data):
     """Spawn the Meet bot pointing at the given URL. Admin-only."""
-    global _meet_bot_process
+    global _meet_bot_process, _meet_bot_url
 
     url = (data or {}).get("url", "").strip()
     if not url.startswith("http"):
@@ -2785,8 +2960,9 @@ def handle_start_meet_bot(data):
                 stdin=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
             )
+            _meet_bot_url = url
             log(f"Spawned Meet bot (pid={_meet_bot_process.pid}) → {url}", "BOT")
-            emit("meet_bot_control_result", {"ok": True, "pid": _meet_bot_process.pid})
+            emit("meet_bot_control_result", {"ok": True, "pid": _meet_bot_process.pid, "url": url})
         except Exception as e:
             log(f"Failed to spawn bot: {e}", "BOT")
             emit("meet_bot_control_result", {"ok": False, "error": str(e)})
@@ -2795,11 +2971,12 @@ def handle_start_meet_bot(data):
 @socketio.on("stop_meet_bot")
 def handle_stop_meet_bot():
     """Terminate the running Meet bot subprocess."""
-    global _meet_bot_process
+    global _meet_bot_process, _meet_bot_url
     with _meet_bot_lock:
         if _meet_bot_process is None or _meet_bot_process.poll() is not None:
             emit("meet_bot_control_result", {"ok": False, "error": "No bot running"})
             _meet_bot_process = None
+            _meet_bot_url = None
             return
         try:
             _meet_bot_process.terminate()
@@ -2809,6 +2986,7 @@ def handle_stop_meet_bot():
                 _meet_bot_process.kill()
             log(f"Stopped Meet bot subprocess", "BOT")
             _meet_bot_process = None
+            _meet_bot_url = None
             emit("meet_bot_control_result", {"ok": True})
         except Exception as e:
             emit("meet_bot_control_result", {"ok": False, "error": str(e)})

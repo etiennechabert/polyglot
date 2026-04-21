@@ -60,7 +60,7 @@ function log(msg, ...rest) {
 
 // Connect to Polyglot's /meet_bot SocketIO namespace.
 // Returns { sendAudio, sendEvent } or null if not configured / unavailable.
-async function connectPolyglot(polyglotUrl) {
+async function connectPolyglot(polyglotUrl, meetUrl) {
   if (!polyglotUrl) return null;
   try {
     const { io } = await import("socket.io-client");
@@ -77,6 +77,9 @@ async function connectPolyglot(polyglotUrl) {
       setTimeout(() => reject(new Error("connect timeout")), 15000);
     });
     log(`Connected to Polyglot at ${polyglotUrl}/meet_bot`);
+    // Self-report the meeting URL so the admin panel can show which call the
+    // bot is attached to, even when the bot was started from the CLI.
+    socket.emit("bot_info", { url: meetUrl });
     return {
       sendAudio: (pcm, captureTs) =>
         socket.emit("audio_frame", { capture_ts_ms: captureTs, sample_rate: 16000, channels: 1 }, pcm),
@@ -258,7 +261,7 @@ async function joinMeeting({ url, name, headful, polyglotUrl, profileDir }) {
     }
 
     // Phase 2: start audio capture.
-    const polyglot = await connectPolyglot(polyglotUrl);
+    const polyglot = await connectPolyglot(polyglotUrl, url);
     let chunkCount = 0;
     log("Setting up audio capture…");
     await setupAudioCapture(page, (pcm, captureTs) => {
