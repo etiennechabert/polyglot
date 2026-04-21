@@ -34,9 +34,9 @@ export async function setupSpeakerDetection(page, onEvent) {
 
       const rootLabel = root.getAttribute("aria-label") || "";
       if (rootLabel) {
-        const m = rootLabel.match(/^(.+?)(?:'s\s+(?:video|screen|camera|tile)|(?:\s*\(you\)))/i);
+        const m = rootLabel.match(/^(.+?)(?:'s\s+(?:video|screen|camera|tile|presentation)|(?:\s*\(you\)))/i);
         if (m?.[1] && !isUIAction(m[1])) return m[1].trim();
-        if (rootLabel.length < 60 && !isUIAction(rootLabel) && !/\b(?:from|your|main|screen)\b/i.test(rootLabel))
+        if (rootLabel.length < 60 && !isUIAction(rootLabel) && !/\b(?:from|your|main|screen|presentation)\b/i.test(rootLabel))
           return rootLabel.trim();
       }
 
