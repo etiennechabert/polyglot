@@ -5,6 +5,38 @@
 // anchors (aria-label, role, visible text) over class names.
 
 export const SELECTORS = {
+  // ── Active-speaker / roster detection (Phase 3) ──────────────────────
+  //
+  // Meet's classes are obfuscated; everything here anchors on aria-label,
+  // role, or data-* attributes that have been stable across rollouts.
+  //
+  // Tile container — wraps one participant's video + name + mic ring.
+  // data-participant-id is the most stable anchor we have.
+  participantTile: '[data-participant-id]',
+
+  // Speaking indicators — Meet has used several over time; we try all.
+  // Strategy 1: explicit boolean attribute (newer Meet)
+  speakingAttr: '[data-is-speaking="true"]',
+  // Strategy 2: aria-label on the tile or mic button says "… is speaking"
+  speakingAriaLabel: '[aria-label*="is speaking" i]',
+  // Strategy 3: the audio-level bars inside a tile animate when speaking.
+  // Class is obfuscated, but the element always carries [data-is-muted="false"]
+  // and its closest tile ancestor is the active speaker. Fallback only.
+  audioLevelBar: '[data-is-muted="false"]',
+
+  // Name extraction — checked in order inside a tile element.
+  tileNameSelectors: [
+    '[data-self-name]',             // newer Meet
+    '[jsname="r8qRAd"]',            // one known jsname for name label
+    'div[class][data-tooltip]',     // tooltip often holds display name
+  ],
+
+  // People panel — open it to get full roster.
+  peopleButton:
+    'button[aria-label*="people" i], button[aria-label*="everyone" i], button[aria-label*="participants" i]',
+  // Each row in the People panel roster.
+  rosterItem: '[data-participant-id] span[jsname], [role="listitem"] span',
+
   // Pre-join screen (anonymous guest path) -------------------------------
   // The "Your name" input shown to signed-out users on the Meet landing page
   // before joining. Meet has used multiple implementations; try in order.
@@ -34,6 +66,11 @@ export const SELECTORS = {
   // Lobby / denial detection. When the host denies entry, Meet shows a
   // message containing this text.
   deniedText: /You can't join this call|no one responded|denied/i,
+
+  // Bot / access blocked detection. Google redirects here or shows this text
+  // when the meeting blocks automated access or the link is invalid.
+  blockedUrls: ["workspace.google.com/products/meet", "accounts.google.com/v3/signin/rejected"],
+  blockedText: /you can't join this video call|this meeting is locked|you're not allowed|not available/i,
 };
 
 // Helper: return the first selector from a list that matches something on

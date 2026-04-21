@@ -771,9 +771,17 @@
             <div class="panel" style="display: flex; flex-direction: column; max-height: none; height: 100%;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0;">
                     <h2 style="margin: 0;">📝 Transcript</h2>
-                    <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
-                        Lag: <span id="adminLagSeconds">0</span>s
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span id="botStatusBadge" style="font-size: 11px; padding: 3px 10px; border-radius: 12px; background: #374151; color: #9ca3af; display: none;">Bot disconnected</span>
+                        <div id="adminLagTimer" style="font-size: 12px; color: rgba(255, 255, 255, 0.6); padding: 6px 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; display: none;">
+                            Lag: <span id="adminLagSeconds">0</span>s
+                        </div>
                     </div>
+                </div>
+                <!-- Meet participant roster (shown when bot is connected) -->
+                <div id="meetRosterPanel" style="display: none; margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;">
+                    <div style="font-size: 11px; color: #9ca3af; margin-bottom: 4px;">PARTICIPANTS</div>
+                    <ul id="meetRosterList" style="margin: 0; padding: 0; list-style: none; max-height: 80px; overflow-y: auto; font-size: 12px;"></ul>
                 </div>
                 <div id="transcriptContent" class="translation-content" style="font-size: 16px; line-height: 1.7; flex: 1; overflow-y: auto;">
                     <div class="empty-state">
@@ -1838,6 +1846,42 @@ Example:
                 void debugPanel.offsetWidth;
                 debugPanel.classList.add('debug-flash');
             }
+        });
+
+        // ── Meet bot events ─────────────────────────────────────────────────
+
+        socket.on('bot_status', (data) => {
+            const badge = document.getElementById('botStatusBadge');
+            const rosterPanel = document.getElementById('meetRosterPanel');
+            if (!badge) return;
+            badge.style.display = 'inline-block';
+            badge.textContent = data.connected ? '🤖 Bot connected' : '🤖 Bot disconnected';
+            badge.style.background = data.connected ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)';
+            badge.style.color = data.connected ? '#22c55e' : '#ef4444';
+            badge.style.border = `1px solid ${data.connected ? '#22c55e' : '#ef4444'}`;
+            if (rosterPanel) rosterPanel.style.display = data.connected ? 'block' : 'none';
+        });
+
+        socket.on('meet_roster', (data) => {
+            const el = document.getElementById('meetRosterList');
+            const rosterPanel = document.getElementById('meetRosterPanel');
+            if (!el) return;
+            el.innerHTML = (data.participants || [])
+                .map(n => `<li style="padding:2px 0;color:#ccc;">${n}</li>`)
+                .join('');
+            if (rosterPanel && (data.participants || []).length > 0)
+                rosterPanel.style.display = 'block';
+        });
+
+        socket.on('rename_speaker', (data) => {
+            // Retroactively replace SPEAKER_XX labels in the transcript panel.
+            const tc = document.getElementById('transcriptContent');
+            if (!tc) return;
+            const re = new RegExp(data.speaker_id.replace('_', '_'), 'g');
+            tc.innerHTML = tc.innerHTML.replace(
+                new RegExp(data.speaker_id, 'g'),
+                data.name
+            );
         });
 
         function updateStatus() {

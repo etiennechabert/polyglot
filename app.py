@@ -4,6 +4,7 @@ Captures system audio and translates speech into multiple languages simultaneous
 """
 
 import argparse
+import collections
 import os
 import queue
 import random
@@ -11,6 +12,7 @@ import sys
 import threading
 import time
 import warnings
+import wave
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -21,9 +23,9 @@ def log(message, tag=None):
     """Print a log message with timestamp. Tag is optional prefix like [SUMMARY]"""
     ts = datetime.now().strftime('%H:%M:%S')
     if tag:
-        print(f"[{ts}] [{tag}] {message}")
+        print(f"[{ts}] [{tag}] {message}", flush=True)
     else:
-        print(f"[{ts}] {message}")
+        print(f"[{ts}] {message}", flush=True)
 
 
 # Word list for generating memorable passphrases
@@ -318,6 +320,30 @@ last_summary_segment_count = 0  # Track how many segments were in last summary
 all_meeting_segments = []  # FULL meeting transcript (never cleared)
 meeting_start_time = None  # Track when meeting started (first transcription)
 summary_pending = False  # Track if a summary generation is waiting
+
+# ── Meet bot state (Phase 4) ──────────────────────────────────────────────────
+# Deque of closed speaker segments: (start_ms, end_ms, display_name).
+# Populated by the /meet_bot SocketIO namespace; consumed by resolve_speaker_identity().
+speaker_timeline = collections.deque(maxlen=500)
+# Known participants: display_name -> first_seen_ms
+meet_participants = {}
+# Open (unended) speaker intervals: display_name -> start_ms
+_active_speaker_starts = {}
+# Whether the Playwright bot is currently connected
+bot_connected = False
+# Accumulation buffer for rechunking 320-sample bot frames → CHUNK_SIZE frames
+_bot_pcm_buffer = np.array([], dtype=np.float32)
+# Wall-clock ms of the most recently received bot audio frame (for Phase 5 time-alignment)
+_last_capture_ts_ms = None
+# WAV file writer — captures the full raw 16 kHz mono meeting audio for retranscription
+_bot_wav_writer = None
+_bot_wav_lock = threading.Lock()
+# Speaker-switch batching: who the bot says is currently speaking, and whether the most recent
+# speaker_start differs from the previous one (triggers process_audio to flush the current batch).
+_current_bot_speaker = None
+_pending_speaker_switch = False
+# Maximum batch length when bot is connected (gives Whisper more context per speaker turn).
+BOT_MAX_BATCH_SEC = 60
 
 
 def load_transcript_segments(transcript_path):
@@ -1236,8 +1262,57 @@ def perform_speaker_diarization(audio_data, sample_rate):
         return None
 
 
+def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_secs):
+    """Match pyannote speaker IDs to real names via speaker_timeline overlap.
+
+    Returns {original_pyannote_id: real_name} for speakers with >= 30% time overlap.
+    Considers both closed (speaker_timeline) and still-open (_active_speaker_starts)
+    intervals, since a speaker who started talking during this batch may not have
+    emitted speaker_end yet when the transcription thread kicks off.
+    """
+    if batch_end_ts_ms is None or not speaker_segments:
+        return {}
+
+    # Build the full set of speaker intervals to consider.
+    intervals = list(speaker_timeline)  # closed: (start_ms, end_ms, name)
+    now_ms = int(time.time() * 1000)
+    for name, start_ms in _active_speaker_starts.items():
+        intervals.append((start_ms, now_ms, name))
+
+    if not intervals:
+        return {}
+
+    from collections import defaultdict
+    batch_start_ms = batch_end_ts_ms - audio_duration_secs * 1000
+
+    speaker_times = defaultdict(list)
+    for seg in speaker_segments:
+        seg_start_ms = batch_start_ms + seg["start"] * 1000
+        seg_end_ms = batch_start_ms + seg["end"] * 1000
+        speaker_times[seg["speaker"]].append((seg_start_ms, seg_end_ms))
+
+    resolved = {}
+    for original_id, time_ranges in speaker_times.items():
+        name_overlap = defaultdict(float)
+        for seg_start_ms, seg_end_ms in time_ranges:
+            for (tl_start, tl_end, name) in intervals:
+                overlap = max(0.0, min(seg_end_ms, tl_end) - max(seg_start_ms, tl_start))
+                if overlap > 0:
+                    name_overlap[name] += overlap
+
+        if not name_overlap:
+            continue
+
+        best_name = max(name_overlap, key=name_overlap.get)
+        total_ms = sum(end - start for start, end in time_ranges)
+        if total_ms > 0 and name_overlap[best_name] / total_ms >= 0.30:
+            resolved[original_id] = best_name
+
+    return resolved
+
+
 @torch.inference_mode()
-def transcribe_and_translate(audio_data, audio_duration):
+def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None):
     """Background thread for transcription and translation with speaker diarization"""
     global is_processing, all_meeting_segments
 
@@ -1328,6 +1403,13 @@ def transcribe_and_translate(audio_data, audio_duration):
                     speaker_mapping[original_id] = f"SPEAKER_{speaker_counter:02d}"
                     speaker_counter += 1
 
+            # Phase 5: resolve pyannote IDs → real names from speaker_timeline.
+            resolved_names = resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration)
+            if resolved_names:
+                for orig_id, real_name in resolved_names.items():
+                    speaker_xx = speaker_mapping.get(orig_id, orig_id)
+                    log(f"Resolved {speaker_xx} → {real_name}", "BOT")
+                    socketio.emit("rename_speaker", {"speaker_id": speaker_xx, "name": real_name})
 
             # Extract all words with timestamps from chunks
             all_words = []
@@ -1361,7 +1443,9 @@ def transcribe_and_translate(audio_data, audio_duration):
 
                     if overlap > max_overlap:
                         max_overlap = overlap
-                        best_speaker = speaker_mapping.get(seg["speaker"], seg["speaker"])
+                        orig = seg["speaker"]
+                        # Prefer resolved real name; fall back to renumbered SPEAKER_XX.
+                        best_speaker = resolved_names.get(orig, speaker_mapping.get(orig, orig))
                         best_segment_idx = idx
 
                 words_with_speakers.append({
@@ -1705,10 +1789,22 @@ def process_audio():
 
             buffer.append(chunk)
 
+            # Speaker-switch batching (bot mode): when the bot reports a new active
+            # speaker, flush the current batch so each turn is transcribed as one unit.
+            # Extend max length to BOT_MAX_BATCH_SEC so one speaker can ramble up to 1 min.
+            global _pending_speaker_switch
+            bot_active = bot_connected and _current_bot_speaker is not None
+            if bot_active:
+                max_chunks = int(actual_sample_rate * BOT_MAX_BATCH_SEC / CHUNK_SIZE)
+
+            speaker_switched = bot_active and _pending_speaker_switch and len(buffer) >= min_chunks
+            if speaker_switched:
+                _pending_speaker_switch = False
+
             # Process when we detect end of sentence (silence after minimum audio) OR max buffer reached
             silence_detected = len(buffer) >= min_chunks and silence_counter >= audio_thresholds["silence_chunks"]
             max_length_reached = len(buffer) >= max_chunks
-            should_process = silence_detected or max_length_reached
+            should_process = silence_detected or max_length_reached or speaker_switched
 
             if should_process:
                 is_processing = True  # Set lock
@@ -1753,10 +1849,13 @@ def process_audio():
                 # Calculate audio duration
                 audio_duration = len(audio_resampled) / SAMPLE_RATE
 
+                # Snapshot the wall-clock anchor for Phase 5 speaker resolution.
+                batch_end_ts = _last_capture_ts_ms
+
                 # Launch background thread for transcription and translation
                 # This keeps the main loop responsive for WebSocket updates
                 processing_thread = threading.Thread(
-                    target=transcribe_and_translate, args=(audio_resampled, audio_duration), daemon=True
+                    target=transcribe_and_translate, args=(audio_resampled, audio_duration, batch_end_ts), daemon=True
                 )
                 processing_thread.start()
 
@@ -2201,9 +2300,17 @@ def start_listening_internal():
     if not is_listening:
         is_listening = True
 
-        # Start audio stream
+        # Start the processing thread first (same for both audio sources).
         audio_thread = threading.Thread(target=process_audio, daemon=True)
         audio_thread.start()
+
+        # Meet-bot path: audio arrives over SocketIO at 16 kHz mono; skip PyAudio entirely.
+        if Config.AUDIO_SOURCE == "meet_bot":
+            actual_sample_rate = Config.SAMPLE_RATE  # 16000
+            num_channels = 1
+            print("[AUDIO] Source: Meet bot (waiting for bot to connect and stream audio)")
+            socketio.emit("status", {"listening": True})
+            return
 
         # Initialize PyAudio
         p_audio = pyaudio.PyAudio()
@@ -2489,6 +2596,125 @@ def handle_broadcast_manual_summary(data):
 
     # Confirm to admin
     emit('manual_summary_broadcast', {'success': True, 'languages_sent': list(translations_cache.keys())})
+
+
+# ── Meet bot SocketIO namespace (Phase 4) ────────────────────────────────────
+#
+# The Playwright bot connects here as a socket.io-client at /meet_bot.
+# It streams two event types:
+#   audio_frame  — binary PCM16 payload + JSON meta {capture_ts_ms, sample_rate, channels}
+#   speaker_event — JSON {type, name, wall_clock_ms} for speaker_start/end/roster_update
+
+def _open_bot_wav():
+    """Open a WAV file to record the full raw meeting audio from the bot."""
+    global _bot_wav_writer
+    with _bot_wav_lock:
+        if _bot_wav_writer is not None or not TRANSCRIPT_FILE:
+            return
+        wav_path = TRANSCRIPT_FILE.with_suffix(".wav")
+        try:
+            _bot_wav_writer = wave.open(str(wav_path), "wb")
+            _bot_wav_writer.setnchannels(1)
+            _bot_wav_writer.setsampwidth(2)  # int16
+            _bot_wav_writer.setframerate(Config.SAMPLE_RATE)
+            log(f"Recording meeting audio → {wav_path.name}", "BOT")
+        except Exception as e:
+            log(f"Failed to open WAV: {e}", "BOT")
+            _bot_wav_writer = None
+
+
+def _close_bot_wav():
+    global _bot_wav_writer
+    with _bot_wav_lock:
+        if _bot_wav_writer is None:
+            return
+        try:
+            _bot_wav_writer.close()
+            log("Meeting audio file closed", "BOT")
+        except Exception as e:
+            log(f"Error closing WAV: {e}", "BOT")
+        _bot_wav_writer = None
+
+
+if Config.MEET_BOT_ENABLED:
+
+    @socketio.on("connect", namespace="/meet_bot")
+    def bot_connect():
+        global bot_connected
+        bot_connected = True
+        log("Meet bot connected", "BOT")
+        _open_bot_wav()
+        socketio.emit("bot_status", {"connected": True}, room="admin")
+
+    @socketio.on("disconnect", namespace="/meet_bot")
+    def bot_disconnect():
+        global bot_connected, _active_speaker_starts
+        bot_connected = False
+        # Close any open speaker intervals so timeline stays consistent.
+        now_ms = int(time.time() * 1000)
+        for name, start in list(_active_speaker_starts.items()):
+            speaker_timeline.append((start, now_ms, name))
+        _active_speaker_starts.clear()
+        _close_bot_wav()
+        log("Meet bot disconnected", "BOT")
+        socketio.emit("bot_status", {"connected": False}, room="admin")
+
+    @socketio.on("audio_frame", namespace="/meet_bot")
+    def bot_audio_frame(meta, data):
+        global _bot_pcm_buffer, _last_capture_ts_ms
+        if not is_listening:
+            return
+        # Persist raw int16 PCM for offline retranscription.
+        # writeframes (not writeframesraw) patches the header on every write so
+        # the file is valid even if the server is killed without clean shutdown.
+        if _bot_wav_writer is not None:
+            try:
+                with _bot_wav_lock:
+                    if _bot_wav_writer is not None:
+                        _bot_wav_writer.writeframes(data)
+            except Exception:
+                pass
+        # data arrives as bytes (Int16 PCM, 16 kHz mono, 320 samples = 20 ms).
+        frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+        _bot_pcm_buffer = np.concatenate([_bot_pcm_buffer, frame])
+        # Rechunk to CHUNK_SIZE (1024) so process_audio's duration math is correct.
+        while len(_bot_pcm_buffer) >= CHUNK_SIZE:
+            audio_queue.put(_bot_pcm_buffer[:CHUNK_SIZE].copy())
+            _bot_pcm_buffer = _bot_pcm_buffer[CHUNK_SIZE:]
+        _last_capture_ts_ms = meta.get("capture_ts_ms")
+
+    @socketio.on("speaker_event", namespace="/meet_bot")
+    def bot_speaker_event(ev):
+        global meet_participants, _active_speaker_starts, _current_bot_speaker, _pending_speaker_switch
+        ev_type = ev.get("type")
+        name = ev.get("name")
+        ts_ms = ev.get("wall_clock_ms", int(time.time() * 1000))
+
+        if ev_type == "roster_update":
+            for p in ev.get("participants", []):
+                if p and p not in meet_participants:
+                    meet_participants[p] = ts_ms
+            socketio.emit("meet_roster", {
+                "participants": list(meet_participants.keys()),
+                "bot_connected": True,
+            }, room="admin")
+            return
+
+        if not name:
+            return
+
+        if ev_type == "speaker_start":
+            _active_speaker_starts[name] = ts_ms
+            # Flag a pending switch if the speaker changed — process_audio uses this to flush.
+            if _current_bot_speaker is not None and _current_bot_speaker != name:
+                _pending_speaker_switch = True
+            _current_bot_speaker = name
+            log(f"Speaking: {name}", "BOT")
+
+        elif ev_type == "speaker_end":
+            start = _active_speaker_starts.pop(name, ts_ms - 1000)
+            speaker_timeline.append((start, ts_ms, name))
+            log(f"Segment: {name} {ts_ms - start} ms", "BOT")
 
 
 if __name__ == "__main__":

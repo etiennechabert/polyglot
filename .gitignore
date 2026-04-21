@@ -208,4 +208,5 @@ __marimo__/
 transcript.txt
 /transcripts
 polyglot.lock
+viewer_password.txt
 .claude/settings.local.json

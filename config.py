@@ -211,6 +211,14 @@ class Config:
     SAMPLE_RATE = 16000  # Whisper expects 16kHz audio
     CHUNK_SIZE = 1024  # Audio buffer chunk size
 
+    # Audio source — "wasapi" uses the WASAPI loopback device (original path);
+    # "meet_bot" receives 16 kHz PCM16 from the Playwright bot over SocketIO.
+    AUDIO_SOURCE = os.getenv("AUDIO_SOURCE", "meet_bot")
+
+    # Meet bot SocketIO receiver.  The bot connects to /meet_bot on whatever
+    # port Polyglot is already running on — no separate port needed.
+    MEET_BOT_ENABLED = os.getenv("MEET_BOT_ENABLED", "True").lower() in ("true", "1", "yes")
+
     # Minimum audio level to process (prevents hallucinations during silence)
     # If average audio level is below this, skip transcription
     MIN_AUDIO_LEVEL = 0.01
