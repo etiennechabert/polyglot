@@ -22,6 +22,11 @@ jobs:
       run: |
         python -m pip install --upgrade pip
 
+        # config.py imports torch and python-dotenv at module level; the
+        # runner has no GPU, so the CPU wheel is enough to import-validate it.
+        pip install python-dotenv
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+
         # Check that config.py references correct CUDA setup
         python -c "
         from config import Config

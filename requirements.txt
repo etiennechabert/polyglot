@@ -5,7 +5,9 @@ python-socketio==5.10.0
 
 # Audio processing
 sounddevice==0.4.6
-pyaudiowpatch==0.2.12.7
+# Windows-only (WASAPI loopback capture) — no Linux wheels exist, so gate it
+# behind a platform marker or `pip install -r requirements.txt` fails on CI.
+pyaudiowpatch==0.2.12.7; sys_platform == "win32"
 resampy==0.4.3
 soundfile==0.13.1
 
