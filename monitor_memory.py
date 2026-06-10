@@ -2,25 +2,28 @@
 GPU Memory Monitor for Polyglot
 Continuously monitors GPU memory usage while the app is running
 """
-import time
+
 import subprocess
 import sys
+import time
 from datetime import datetime
+
 
 def get_gpu_memory():
     """Get current GPU memory usage in MB"""
     try:
         result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
-        used, total = result.stdout.strip().split(',')
+        used, total = result.stdout.strip().split(",")
         return float(used.strip()), float(total.strip())
     except Exception as e:
         print(f"Error reading GPU memory: {e}")
         return None, None
+
 
 def monitor_memory(interval=2, duration=None):
     """
@@ -94,6 +97,7 @@ def monitor_memory(interval=2, duration=None):
     if peak_used > 0:
         print(f"Peak GPU Memory Usage: {peak_used / 1024:.2f} GB ({peak_used:.0f} MB)")
     print("=" * 80)
+
 
 if __name__ == "__main__":
     # Default: monitor every 2 seconds indefinitely

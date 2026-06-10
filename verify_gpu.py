@@ -5,6 +5,7 @@ Run this after pip install to ensure CUDA is properly configured
 
 import sys
 
+
 def verify_cuda():
     try:
         import torch
@@ -40,6 +41,7 @@ def verify_cuda():
 
     # Check version is >= 2.6.0 for transformers compatibility
     from packaging import version
+
     torch_version = torch.__version__.split("+")[0]
     if version.parse(torch_version) < version.parse("2.6.0"):
         print("\n" + "=" * 80)
@@ -56,6 +58,7 @@ def verify_cuda():
     print(f"Compute capability: sm_{torch.cuda.get_device_capability(0)[0]}{torch.cuda.get_device_capability(0)[1]}0")
     print("\nGPU setup is correct!")
     return True
+
 
 if __name__ == "__main__":
     success = verify_cuda()
