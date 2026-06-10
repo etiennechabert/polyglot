@@ -1926,9 +1926,13 @@ Example:
 
         socket.on('rename_speaker', (data) => {
             // Retroactively rename SPEAKER_XX in stored utterances + re-render.
+            // SPEAKER_XX ids are batch-local: only touch the utterance this
+            // resolution came from, otherwise another batch's SPEAKER_XX
+            // (a different person) gets relabelled.
             if (!data || !data.speaker_id || !data.name) return;
             let dirty = false;
             for (const u of transcriptUtterances) {
+                if (data.utterance_id && u.utterance_id !== data.utterance_id) continue;
                 for (const seg of u.segments) {
                     if (seg.speaker === data.speaker_id) { seg.speaker = data.name; dirty = true; }
                 }

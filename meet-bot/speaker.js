@@ -175,11 +175,15 @@ export async function setupSpeakerDetection(page, onEvent) {
     }
 
     // Sweeper: close intervals for speakers whose captions haven't updated.
+    // The interval end is stamped with the LAST caption update, not sweep
+    // time — sweep time is lastUpdate + timeout (+ scheduler jitter), which
+    // would inflate every interval by ~2 s into the next speaker's turn and
+    // corrupt the overlap vote during rapid exchanges.
     function sweepInactive() {
       const now = Date.now();
       for (const [name, info] of activeSpeakers) {
         if (now - info.lastUpdateMs > SPEAKER_TIMEOUT_MS) {
-          emit({ type: "speaker_end", name, wall_clock_ms: now });
+          emit({ type: "speaker_end", name, wall_clock_ms: info.lastUpdateMs });
           activeSpeakers.delete(name);
         }
       }
