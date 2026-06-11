@@ -414,6 +414,12 @@ _current_bot_speaker = None
 _pending_speaker_switch = False
 # Maximum batch length when bot is connected (gives Whisper more context per speaker turn).
 BOT_MAX_BATCH_SEC = 60
+# Meet captions are ASR output and trail the spoken audio: a speaker's first
+# caption update lands ~0.5-2 s after they actually started talking. Caption-
+# derived intervals are shifted back by this many ms before being compared
+# against pyannote segment times (which live on the audio-capture clock).
+# Without this, short turns in a rapid exchange overlap the WRONG speaker.
+CAPTION_LAG_MS = 1000
 # Partial (streaming) transcription state. While a speaker keeps talking we
 # re-transcribe the growing buffer every audio_thresholds["partial_interval_sec"]
 # and emit an is_partial=true WS payload keyed by _current_utterance_id; the
@@ -905,7 +911,7 @@ Output ONLY this JSON format (array of strings, NOT objects):
 Rules:
 - Exactly 5 short bullet points as plain strings in the array
 - Include specific names, numbers, facts mentioned
-- Focus only on what was just discussed<|eot_id|><|start_header_id|>assistant<|end_header_id|}}
+- Focus only on what was just discussed<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 """
 
         # Generate summary (no token limit - let model decide)
@@ -1359,11 +1365,20 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
     if batch_end_ts_ms is None or not speaker_segments:
         return {}
 
-    # Build the full set of speaker intervals to consider.
-    intervals = list(speaker_timeline)  # closed: (start_ms, end_ms, name)
+    # Build the full set of speaker intervals to consider, compensating for
+    # caption lag (see CAPTION_LAG_MS). Snapshot the shared structures with
+    # list() first: the bot's SocketIO thread mutates them concurrently and a
+    # plain .items() iteration can raise "dictionary changed size during
+    # iteration", which would abort the whole transcription batch.
     now_ms = int(time.time() * 1000)
-    for name, start_ms in _active_speaker_starts.items():
-        intervals.append((start_ms, now_ms, name))
+    intervals = [
+        (start_ms - CAPTION_LAG_MS, end_ms - CAPTION_LAG_MS, name)
+        for (start_ms, end_ms, name) in list(speaker_timeline)  # closed intervals
+    ]
+    for name, start_ms in list(_active_speaker_starts.items()):
+        # Open interval: speaker is still talking, so leave the end at "now"
+        # (resolution runs well after the batch ended anyway).
+        intervals.append((start_ms - CAPTION_LAG_MS, now_ms, name))
 
     if not intervals:
         return {}
@@ -1625,7 +1640,19 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
                 for orig_id, real_name in resolved_names.items():
                     speaker_xx = speaker_mapping.get(orig_id, orig_id)
                     log(f"Resolved {speaker_xx} → {real_name}", "BOT")
-                    socketio.emit("rename_speaker", {"speaker_id": speaker_xx, "name": real_name})
+                    # SPEAKER_XX ids are local to ONE batch (renumbered per
+                    # batch by first appearance), so the rename must be scoped
+                    # to this utterance — otherwise frontends relabel other
+                    # batches' SPEAKER_XX rows, which belong to someone else.
+                    rename_payload = {
+                        "speaker_id": speaker_xx,
+                        "name": real_name,
+                        "utterance_id": utterance_id,
+                    }
+                    socketio.emit("rename_speaker", rename_payload, room="admin")
+                    for lang_code, n in active_language_viewers.items():
+                        if n > 0:
+                            socketio.emit("rename_speaker", rename_payload, room=f"lang_{lang_code}")
 
             # Extract all words with timestamps from chunks
             all_words = []
@@ -1757,10 +1784,11 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
             )
             print(f"[{timestamp}] [{audio_duration:.2f}s] Speaker 1: {full_transcript}")
 
-        # Write to transcript file
+        # Write to transcript file (speaker label included — real name when
+        # resolve_speaker_identity matched one, SPEAKER_XX otherwise)
         with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
             for seg in segments_with_speakers:
-                f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['text']}\n")
+                f.write(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['speaker']}: {seg['text']}\n")
 
         # Accumulate segments for summarization (add timestamp for reference)
         current_unix_time = time.time()
@@ -2088,12 +2116,18 @@ def process_audio():
                 buffer = []
                 silence_counter = 0
 
-                # Clear the queue BEFORE processing to avoid duplicate audio
-                while not audio_queue.empty():
-                    try:
-                        audio_queue.get_nowait()
-                    except queue.Empty:
-                        break
+                # Clear the queue BEFORE processing to avoid duplicate audio.
+                # Mic/WASAPI mode only: the bot stream is continuous meeting
+                # audio, so draining here would punch a hole in the recording
+                # right after a speaker-switch flush (exactly where the new
+                # speaker's first words are) and skew the caption/audio
+                # time alignment.
+                if not bot_mode:
+                    while not audio_queue.empty():
+                        try:
+                            audio_queue.get_nowait()
+                        except queue.Empty:
+                            break
 
                 # Convert to float32
                 audio_float = audio_data.flatten().astype(np.float32)
