@@ -22,7 +22,7 @@ from pathlib import Path
 
 def log(message, tag=None):
     """Print a log message with timestamp. Tag is optional prefix like [SUMMARY]"""
-    ts = datetime.now().strftime('%H:%M:%S')
+    ts = datetime.now().strftime("%H:%M:%S")
     if tag:
         print(f"[{ts}] [{tag}] {message}", flush=True)
     else:
@@ -31,15 +31,78 @@ def log(message, tag=None):
 
 # Word list for generating memorable passphrases
 PASSPHRASE_WORDS = [
-    "apple", "banana", "cherry", "dragon", "eagle", "forest", "garden", "harbor",
-    "island", "jungle", "kite", "lemon", "mountain", "night", "ocean", "planet",
-    "queen", "river", "sunset", "thunder", "umbrella", "valley", "winter", "yellow",
-    "zebra", "anchor", "bridge", "castle", "dolphin", "ember", "falcon", "glacier",
-    "horizon", "ivory", "jasmine", "kingdom", "lantern", "meadow", "nebula", "orchid",
-    "phoenix", "quartz", "rainbow", "silver", "temple", "universe", "velvet", "whisper",
-    "crystal", "breeze", "coral", "dawn", "eclipse", "flame", "golden", "harmony",
-    "indigo", "jewel", "karma", "lunar", "marvel", "nimbus", "opal", "prism",
-    "quest", "radiant", "sapphire", "twilight", "unity", "venture", "wonder", "zenith"
+    "apple",
+    "banana",
+    "cherry",
+    "dragon",
+    "eagle",
+    "forest",
+    "garden",
+    "harbor",
+    "island",
+    "jungle",
+    "kite",
+    "lemon",
+    "mountain",
+    "night",
+    "ocean",
+    "planet",
+    "queen",
+    "river",
+    "sunset",
+    "thunder",
+    "umbrella",
+    "valley",
+    "winter",
+    "yellow",
+    "zebra",
+    "anchor",
+    "bridge",
+    "castle",
+    "dolphin",
+    "ember",
+    "falcon",
+    "glacier",
+    "horizon",
+    "ivory",
+    "jasmine",
+    "kingdom",
+    "lantern",
+    "meadow",
+    "nebula",
+    "orchid",
+    "phoenix",
+    "quartz",
+    "rainbow",
+    "silver",
+    "temple",
+    "universe",
+    "velvet",
+    "whisper",
+    "crystal",
+    "breeze",
+    "coral",
+    "dawn",
+    "eclipse",
+    "flame",
+    "golden",
+    "harmony",
+    "indigo",
+    "jewel",
+    "karma",
+    "lunar",
+    "marvel",
+    "nimbus",
+    "opal",
+    "prism",
+    "quest",
+    "radiant",
+    "sapphire",
+    "twilight",
+    "unity",
+    "venture",
+    "wonder",
+    "zenith",
 ]
 
 
@@ -77,8 +140,8 @@ def get_existing_transcripts():
 def sanitize_filename(name):
     """Convert meeting name to safe filename"""
     # Replace spaces with underscores, remove special characters
-    safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '' for c in name)
-    safe_name = safe_name.replace(' ', '_')
+    safe_name = "".join(c if c.isalnum() or c in (" ", "-", "_") else "" for c in name)
+    safe_name = safe_name.replace(" ", "_")
     return safe_name[:50]  # Limit length
 
 
@@ -87,7 +150,7 @@ def startup_configuration():
     global TRANSCRIPT_FILE, MEETING_NAME
 
     # Check if running in interactive mode (has a terminal/TTY)
-    is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False
+    is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
 
     print("\n" + "=" * 60)
     print("  POLYGLOT - Startup Configuration")
@@ -100,11 +163,11 @@ def startup_configuration():
         try:
             while True:
                 choice = input("  Reuse this password? (Y/n): ").strip().lower()
-                if choice in ('', 'y', 'yes'):
+                if choice in ("", "y", "yes"):
                     Config.VIEWER_PASSWORD = saved_password
                     print(f"  -> Using saved password: {saved_password}")
                     break
-                elif choice in ('n', 'no'):
+                elif choice in ("n", "no"):
                     Config.VIEWER_PASSWORD = generate_viewer_password()
                     save_password(Config.VIEWER_PASSWORD)
                     print(f"  -> Generated new password: {Config.VIEWER_PASSWORD}")
@@ -134,7 +197,7 @@ def startup_configuration():
     if meeting_name:
         MEETING_NAME = meeting_name
         safe_name = sanitize_filename(meeting_name)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         transcript_filename = f"{safe_name}_{timestamp}.txt"
     else:
         MEETING_NAME = f"Meeting {datetime.now().strftime('%Y-%m-%d %H:%M')}"
@@ -148,16 +211,16 @@ def startup_configuration():
         print("  0. Create NEW transcript file")
         for i, tf in enumerate(existing_transcripts[:10], 1):  # Show max 10
             size_kb = tf.stat().st_size / 1024
-            mod_time = datetime.fromtimestamp(tf.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+            mod_time = datetime.fromtimestamp(tf.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
             print(f"  {i}. {tf.name} ({size_kb:.1f}KB, {mod_time})")
 
         while True:
             try:
                 choice = input("\n  Select transcript (0 for new, or number to continue): ").strip()
             except (EOFError, OSError):
-                choice = '0'
+                choice = "0"
 
-            if choice == '' or choice == '0':
+            if choice == "" or choice == "0":
                 # Create new transcript
                 transcripts_dir = Path("transcripts")
                 transcripts_dir.mkdir(exist_ok=True)
@@ -168,7 +231,7 @@ def startup_configuration():
                 TRANSCRIPT_FILE = existing_transcripts[int(choice) - 1]
                 print(f"  -> Continuing transcript: {TRANSCRIPT_FILE.name}")
                 # Update meeting name from filename if continuing
-                MEETING_NAME = TRANSCRIPT_FILE.stem.replace('_', ' ')
+                MEETING_NAME = TRANSCRIPT_FILE.stem.replace("_", " ")
                 break
             else:
                 print("  Invalid choice, please try again")
@@ -188,11 +251,19 @@ def startup_configuration():
     print(f"  Transcript: {TRANSCRIPT_FILE.name}")
     print("-" * 60 + "\n")
 
+
 import numpy as np
 import psutil
 import pyaudiowpatch as pyaudio
 import resampy
 import torch
+
+# Monkey patch transformers to disable torchcodec detection
+import transformers.utils.import_utils
+from flask import Flask, jsonify, render_template, request, session
+from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
+from langdetect import LangDetectException, detect
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 
 # CRITICAL FIX: Prevent transformers from trying to use torchcodec
 # torchcodec is installed by pyannote.audio but the DLLs are missing
@@ -200,13 +271,7 @@ import torch
 # Solution: Monkey patch transformers.utils.import_utils._torchcodec_available to False
 # This makes transformers think torchcodec is not available, so it won't try to use it
 
-from flask import Flask, jsonify, render_template, request, session
-from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
-from langdetect import LangDetectException, detect
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
-# Monkey patch transformers to disable torchcodec detection
-import transformers.utils.import_utils
 transformers.utils.import_utils._torchcodec_available = False
 
 from config import Config
@@ -218,16 +283,18 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch.cuda")
 # Single instance check - prevent multiple app instances
 LOCK_FILE = Path("polyglot.lock")
 
+
 def check_single_instance():
     """Check if another instance of the app is already running"""
     if LOCK_FILE.exists():
         try:
             # Check if the PID in the lock file is still running
-            with open(LOCK_FILE, 'r') as f:
+            with open(LOCK_FILE, "r") as f:
                 old_pid = int(f.read().strip())
 
             # Try to check if process exists (Windows-compatible)
             import psutil
+
             if psutil.pid_exists(old_pid):
                 print(f"\n{'='*80}")
                 print("ERROR: Another instance of Polyglot is already running!")
@@ -243,8 +310,9 @@ def check_single_instance():
             LOCK_FILE.unlink()
 
     # Create lock file with current PID
-    with open(LOCK_FILE, 'w') as f:
+    with open(LOCK_FILE, "w") as f:
         f.write(str(os.getpid()))
+
 
 def cleanup_lock_file():
     """Remove lock file on exit"""
@@ -253,6 +321,7 @@ def cleanup_lock_file():
             LOCK_FILE.unlink()
     except:
         pass
+
 
 # Import pyannote.audio for speaker diarization (ALWAYS ENABLED)
 from pyannote.audio import Pipeline as DiarizationPipeline
@@ -277,7 +346,7 @@ audio_thresholds = Config.get_audio_thresholds()
 selected_audio_device_index = None  # None means auto-detect
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.urandom(24)  # Secret key for sessions
+app.config["SECRET_KEY"] = os.urandom(24)  # Secret key for sessions
 socketio = SocketIO(app, cors_allowed_origins="*", manage_session=False)
 
 # Global state
@@ -299,7 +368,7 @@ num_channels = 2  # Will be set to the actual number of channels
 # Dictionary to track connected clients: session_id -> {'role': 'admin'/'viewer', 'language': 'en', 'authenticated': bool}
 connected_clients = {}
 # Track which languages have active viewers: {'en': 2, 'fr': 1, 'de': 0}
-active_language_viewers = {lang['code']: 0 for lang in Config.TARGET_LANGUAGES}
+active_language_viewers = {lang["code"]: 0 for lang in Config.TARGET_LANGUAGES}
 # Track admin sessions
 admin_sessions = set()
 # Track authenticated viewer sessions
@@ -311,7 +380,7 @@ current_summary = {
     "overview_sections": [],  # Sections covering full meeting: [{title: "...", bullets: [...]}]
     "last_updated": None,
     "segments_summarized": 0,
-    "time_range": ""  # Time range of summarized content (e.g., "14:30:15 - 14:35:22")
+    "time_range": "",  # Time range of summarized content (e.g., "14:30:15 - 14:35:22")
 }
 # Previous overview for summarization chaining (model builds on this)
 previous_overview_text = ""  # Formatted text of last overview for context
@@ -359,7 +428,7 @@ def load_transcript_segments(transcript_path):
 
     Parses lines like: [2025-12-01 19:56:33] [0.00s-11.00s] Text here...
     """
-    global all_meeting_segments, meeting_start_time
+    global meeting_start_time
     import re
     from datetime import datetime
 
@@ -377,7 +446,7 @@ def load_transcript_segments(transcript_path):
                     continue
 
                 # Parse: [2025-12-01 19:56:33] [0.00s-11.00s] Text...
-                match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)', line)
+                match = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)", line)
                 if match:
                     timestamp_str = match.group(1)
                     text = match.group(2)
@@ -392,13 +461,9 @@ def load_transcript_segments(transcript_path):
                         unix_time = time.time()
 
                     # Add segment
-                    all_meeting_segments.append({
-                        "text": text,
-                        "timestamp": timestamp_str,
-                        "unix_time": unix_time,
-                        "start": 0,
-                        "end": 0
-                    })
+                    all_meeting_segments.append(
+                        {"text": text, "timestamp": timestamp_str, "unix_time": unix_time, "start": 0, "end": 0}
+                    )
                     segments_loaded += 1
 
         # Set meeting start time from first segment
@@ -411,6 +476,7 @@ def load_transcript_segments(transcript_path):
         print(f"[TRANSCRIPT] Error loading transcript: {e}")
 
     return segments_loaded
+
 
 # VRAM tracking for admin stats display
 model_vram_usage = {
@@ -434,7 +500,7 @@ def initialize_models():
     When summarization is needed, transcription models swap to CPU and summarization moves to GPU.
     """
     global transcription_pipe, translation_model, translation_tokenizer, diarization_pipeline, summarization_pipe
-    global model_vram_usage, gpu_total_memory
+    global gpu_total_memory
 
     # CRITICAL: Ensure CUDA is available - this app requires GPU
     if not torch.cuda.is_available():
@@ -449,8 +515,7 @@ def initialize_models():
             "   pip uninstall -y torch torchvision torchaudio\n\n"
             "2. Reinstall with CUDA support:\n"
             "   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n\n"
-            "3. Verify NVIDIA drivers are installed and GPU is detected\n"
-            + "=" * 80 + "\n"
+            "3. Verify NVIDIA drivers are installed and GPU is detected\n" + "=" * 80 + "\n"
         )
         print(error_msg)
         raise RuntimeError("CUDA is not available - GPU acceleration is required!")
@@ -465,7 +530,9 @@ def initialize_models():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         gpu_total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
         print(f"GPU Total Memory: {gpu_total_memory:.2f} GB")
-        print(f"Initial GPU Memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
+        print(
+            f"Initial GPU Memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved"
+        )
 
     print()
 
@@ -511,7 +578,9 @@ def initialize_models():
                     summarization_pipe.model.to("cpu")
                     summarization_pipe.device = torch.device("cpu")
                     torch.cuda.empty_cache()
-                    print(f"      [OK] Moved to CPU, GPU freed: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB now allocated")
+                    print(
+                        f"      [OK] Moved to CPU, GPU freed: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB now allocated"
+                    )
             else:
                 print(f"      [OK] Loaded successfully (CPU)")
             print()
@@ -525,8 +594,7 @@ def initialize_models():
                 "1. Check that the model name is correct\n"
                 "2. Install any missing dependencies (e.g., pip install tiktoken)\n"
                 "3. Note: Phi-3-small requires Triton (Linux only)\n"
-                "4. Or set ENABLE_SUMMARIZATION=False in .env to disable summarization\n"
-                + "=" * 80 + "\n"
+                "4. Or set ENABLE_SUMMARIZATION=False in .env to disable summarization\n" + "=" * 80 + "\n"
             )
             print(error_msg)
             raise RuntimeError(f"Failed to load summarization model: {e}")
@@ -577,7 +645,7 @@ def initialize_models():
     if "nllb" in model_name.lower():
         print(f"      NLLB tokenizer type: {type(translation_tokenizer).__name__}")
         # Test language code conversion for our target languages
-        test_codes = ['eng_Latn', 'deu_Latn']
+        test_codes = ["eng_Latn", "deu_Latn"]
         print(f"      Testing language codes:")
         for code in test_codes:
             try:
@@ -611,16 +679,12 @@ def initialize_models():
                 "1. Copy .env.example to .env\n"
                 "2. Get a token at: https://huggingface.co/settings/tokens\n"
                 "3. Accept model terms at: https://huggingface.co/pyannote/speaker-diarization-3.1\n"
-                "4. Add your token to .env file: HF_TOKEN=your_token_here\n"
-                + "=" * 80 + "\n"
+                "4. Add your token to .env file: HF_TOKEN=your_token_here\n" + "=" * 80 + "\n"
             )
             print(error_msg)
             raise RuntimeError("HF_TOKEN is required for speaker diarization!")
 
-        diarization_pipeline = DiarizationPipeline.from_pretrained(
-            Config.DIARIZATION_MODEL,
-            token=Config.HF_TOKEN
-        )
+        diarization_pipeline = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, token=Config.HF_TOKEN)
 
         # Move pipeline to GPU if available
         if device == "cuda":
@@ -653,7 +717,9 @@ def initialize_models():
     print("=" * 80)
     print("ALL MODELS LOADED SUCCESSFULLY!")
     if device == "cuda":
-        print(f"Transcription Models VRAM: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        print(
+            f"Transcription Models VRAM: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB / {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB"
+        )
         print(f"GPU Memory Reserved: {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB")
         if Config.ENABLE_SUMMARIZATION and Config.ENABLE_MODEL_ROTATION:
             print(f"Summarization Model: On CPU (will swap to GPU when needed)")
@@ -678,7 +744,7 @@ def load_summarization_to_gpu():
     summarization model is on GPU to avoid VRAM overflow.
     Note: Translation model stays on GPU - it should not be rotated.
     """
-    global summarization_pipe, summarization_on_gpu, model_vram_usage
+    global summarization_on_gpu
 
     if not Config.ENABLE_MODEL_ROTATION:
         return True  # Model already on GPU if rotation disabled
@@ -711,6 +777,7 @@ def load_summarization_to_gpu():
         except Exception as e:
             log(f"Error loading summarization to GPU: {e}", "MODEL")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -721,7 +788,7 @@ def unload_summarization_to_cpu():
     Called after generating a summary. Frees GPU memory for transcription models.
     Note: Translation model stays on GPU - it should not be rotated.
     """
-    global summarization_pipe, summarization_on_gpu, model_vram_usage
+    global summarization_on_gpu
 
     if not Config.ENABLE_MODEL_ROTATION:
         return True  # Model stays on GPU if rotation disabled
@@ -753,6 +820,7 @@ def unload_summarization_to_cpu():
         except Exception as e:
             log(f"Error restoring models: {e}", "MODEL")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -790,7 +858,7 @@ def generate_summary(previous_overview, new_transcript, time_range="", minutes_s
         time_range: Time range of the full meeting
         minutes_since_start: How long the meeting has been going
     """
-    global current_summary, last_summary_time, all_meeting_segments, summarization_started_at
+    global summarization_started_at
 
     if summarization_pipe is None:
         return None
@@ -853,6 +921,7 @@ Rules:
         # Parse the JSON response
         import json
         import re
+
         # Try to extract JSON from the response
         json_start = generated_text.find("{")
         json_end = generated_text.rfind("}") + 1
@@ -870,28 +939,25 @@ Rules:
 
                 # Strategy 1: Fix unescaped quotes inside strings
                 # Replace problematic characters that break JSON
-                json_str_clean = json_str.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+                json_str_clean = json_str.replace("\n", " ").replace("\r", " ").replace("\t", " ")
 
                 # Strategy 2: Truncate at the error position and close brackets
-                error_pos = e.pos if hasattr(e, 'pos') else len(json_str) // 2
+                error_pos = e.pos if hasattr(e, "pos") else len(json_str) // 2
 
                 # Try parsing up to the error, find last complete item
                 truncated = json_str_clean[:error_pos]
                 # Find last complete string (ends with ", or "])
                 last_complete = max(
-                    truncated.rfind('",'),
-                    truncated.rfind('"]'),
-                    truncated.rfind('" ,'),
-                    truncated.rfind('" ]')
+                    truncated.rfind('",'), truncated.rfind('"]'), truncated.rfind('" ,'), truncated.rfind('" ]')
                 )
 
                 if last_complete > 0:
-                    truncated = truncated[:last_complete + 2]
+                    truncated = truncated[: last_complete + 2]
                     # Close any open brackets
-                    open_brackets = truncated.count('[') - truncated.count(']')
-                    open_braces = truncated.count('{') - truncated.count('}')
-                    truncated = truncated.rstrip().rstrip(',')
-                    truncated += ']' * open_brackets + '}' * open_braces
+                    open_brackets = truncated.count("[") - truncated.count("]")
+                    open_braces = truncated.count("{") - truncated.count("}")
+                    truncated = truncated.rstrip().rstrip(",")
+                    truncated += "]" * open_brackets + "}" * open_braces
 
                     try:
                         summary_data = json.loads(truncated)
@@ -902,16 +968,16 @@ Rules:
 
                 # Strategy 3: Original bracket-closing approach
                 if not repaired:
-                    open_brackets = json_str_clean.count('[') - json_str_clean.count(']')
-                    open_braces = json_str_clean.count('{') - json_str_clean.count('}')
+                    open_brackets = json_str_clean.count("[") - json_str_clean.count("]")
+                    open_braces = json_str_clean.count("{") - json_str_clean.count("}")
 
                     # Remove trailing incomplete strings
                     if json_str_clean.rstrip().endswith('"') or json_str_clean.rstrip().endswith("'"):
-                        json_str_clean = re.sub(r',\s*"[^"]*$', '', json_str_clean)
-                        json_str_clean = re.sub(r',\s*\'[^\']*$', '', json_str_clean)
+                        json_str_clean = re.sub(r',\s*"[^"]*$', "", json_str_clean)
+                        json_str_clean = re.sub(r",\s*\'[^\']*$", "", json_str_clean)
 
-                    json_str_clean = json_str_clean.rstrip().rstrip(',')
-                    json_str_clean += ']' * open_brackets + '}' * open_braces
+                    json_str_clean = json_str_clean.rstrip().rstrip(",")
+                    json_str_clean += "]" * open_brackets + "}" * open_braces
 
                     log(f"Repaired JSON (added {open_brackets} ] and {open_braces} }})", "SUMMARY")
                     summary_data = json.loads(json_str_clean)
@@ -929,7 +995,9 @@ Rules:
                         current_summary["recent_bullets"].append(item)
                     elif isinstance(item, dict):
                         # Extract text from object - try common keys
-                        text = item.get("point") or item.get("text") or item.get("fact") or item.get("detail") or str(item)
+                        text = (
+                            item.get("point") or item.get("text") or item.get("fact") or item.get("detail") or str(item)
+                        )
                         if item.get("fact") and item.get("point"):
                             text = f"{item.get('point')} - {item.get('fact')}"
                         current_summary["recent_bullets"].append(text)
@@ -943,10 +1011,12 @@ Rules:
                     if isinstance(item, dict):
                         # New format: {title, content} -> convert to {title, bullets}
                         if "content" in item:
-                            current_summary["overview_sections"].append({
-                                "title": item.get("title", ""),
-                                "content": item.get("content", "")  # Keep as content for paragraph display
-                            })
+                            current_summary["overview_sections"].append(
+                                {
+                                    "title": item.get("title", ""),
+                                    "content": item.get("content", ""),  # Keep as content for paragraph display
+                                }
+                            )
                         else:
                             # Old format: {title, bullets}
                             current_summary["overview_sections"].append(item)
@@ -955,7 +1025,10 @@ Rules:
                 current_summary["segments_summarized"] = len(all_meeting_segments)
                 current_summary["time_range"] = time_range
 
-            log(f"Generated: {len(current_summary['recent_bullets'])} details, {len(current_summary['overview_sections'])} timeline sections", "SUMMARY")
+            log(
+                f"Generated: {len(current_summary['recent_bullets'])} details, {len(current_summary['overview_sections'])} timeline sections",
+                "SUMMARY",
+            )
             return current_summary
         else:
             log(f"Could not parse JSON from response: {generated_text[:300]}", "SUMMARY")
@@ -964,6 +1037,7 @@ Rules:
     except Exception as e:
         log(f"Error generating summary: {e}", "SUMMARY")
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -980,7 +1054,7 @@ Rules:
 
 def check_and_generate_summary():
     """Check if it's time to schedule a summary (called after each transcription completes)"""
-    global last_summary_time, summary_pending
+    global summary_pending
 
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
         return
@@ -991,9 +1065,12 @@ def check_and_generate_summary():
     current_time = time.time()
 
     # Check if it's time for a summary (transcript file must exist)
-    if (current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
-            and TRANSCRIPT_FILE and TRANSCRIPT_FILE.exists()
-            and not summary_pending):
+    if (
+        current_time - last_summary_time >= Config.SUMMARY_INTERVAL_SECONDS
+        and TRANSCRIPT_FILE
+        and TRANSCRIPT_FILE.exists()
+        and not summary_pending
+    ):
         # Mark summary as pending - it will run after current transcription completes
         summary_pending = True
         log("Summary scheduled - will generate after current processing completes", "SUMMARY")
@@ -1004,7 +1081,7 @@ def run_pending_summary():
 
     Strategy: Read last 5 minutes of transcript directly from file.
     """
-    global last_summary_time, last_summary_segment_count, all_meeting_segments, meeting_start_time, summary_pending, previous_overview_text
+    global summary_pending
 
     if not summary_pending:
         return
@@ -1037,7 +1114,7 @@ def run_pending_summary():
                         continue
 
                     # Parse: [2025-12-01 19:56:33] [0.00s-11.00s] Text...
-                    match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)', line)
+                    match = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[[\d.]+s-[\d.]+s\] (.+)", line)
                     if match:
                         timestamp_str = match.group(1)
                         text = match.group(2)
@@ -1083,7 +1160,10 @@ def run_pending_summary():
     # Only summarize if we have content
     if len(new_transcript_text) > 50:
         log(f"Generating summary: {len(recent_lines)} lines in last 10min from transcript file", "SUMMARY")
-        log(f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars recent, {minutes_since_start}min total", "SUMMARY")
+        log(
+            f"Context: {len(previous_overview_text)} chars prev, {len(new_transcript_text)} chars recent, {minutes_since_start}min total",
+            "SUMMARY",
+        )
 
         # Generate in background thread to not block
         def generate_and_emit():
@@ -1103,14 +1183,14 @@ def run_pending_summary():
                     previous_overview_text = "\n".join(overview_lines)
 
                     # Emit original summary to admin room
-                    socketio.emit('summary_update', summary, room='admin')
+                    socketio.emit("summary_update", summary, room="admin")
 
                     # Translate and emit to each language room
                     for lang_code in active_language_viewers:
                         if active_language_viewers[lang_code] > 0:
                             # Translate summary for this language
                             translated_summary = translate_summary(summary, lang_code)
-                            socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+                            socketio.emit("summary_update", translated_summary, room=f"lang_{lang_code}")
             finally:
                 summary_pending = False
 
@@ -1131,7 +1211,7 @@ def translate_summary(summary, target_lang, source_lang="en"):
             "overview_sections": [],
             "last_updated": summary.get("last_updated"),
             "segments_summarized": summary.get("segments_summarized", 0),
-            "time_range": summary.get("time_range", "")  # Don't translate timestamps
+            "time_range": summary.get("time_range", ""),  # Don't translate timestamps
         }
 
         # Translate recent bullets
@@ -1150,9 +1230,7 @@ def translate_summary(summary, target_lang, source_lang="en"):
             elif "bullets" in section:
                 translated_section["bullets"] = []
                 for bullet in section.get("bullets", []):
-                    translated_section["bullets"].append(
-                        translate_text(bullet, source_lang, target_lang)
-                    )
+                    translated_section["bullets"].append(translate_text(bullet, source_lang, target_lang))
             translated_summary["overview_sections"].append(translated_section)
 
         return translated_summary
@@ -1189,7 +1267,7 @@ def translate_text(text, source_lang, target_lang):
         # Get forced BOS token ID for target language
         # For NLLB models, use convert_tokens_to_ids with the language code
         # For M2M100 models, use get_lang_id
-        if hasattr(translation_tokenizer, 'get_lang_id'):
+        if hasattr(translation_tokenizer, "get_lang_id"):
             # M2M100 tokenizer
             forced_bos_token_id = translation_tokenizer.get_lang_id(tgt_code)
         else:
@@ -1229,10 +1307,7 @@ def perform_speaker_diarization(audio_data, sample_rate):
         if audio_tensor.dim() == 1:
             audio_tensor = audio_tensor.unsqueeze(0)  # Add channel dimension (1, samples)
 
-        waveform_dict = {
-            "waveform": audio_tensor,
-            "sample_rate": sample_rate
-        }
+        waveform_dict = {"waveform": audio_tensor, "sample_rate": sample_rate}
 
         print(f"[DIARIZATION] Audio shape: {audio_tensor.shape}, duration: {audio_tensor.shape[1] / sample_rate:.2f}s")
 
@@ -1250,11 +1325,7 @@ def perform_speaker_diarization(audio_data, sample_rate):
             duration = turn.end - turn.start
             if duration >= Config.MIN_SPEAKER_DURATION:
                 unique_speakers.add(speaker)
-                speaker_segments.append({
-                    "start": turn.start,
-                    "end": turn.end,
-                    "speaker": speaker
-                })
+                speaker_segments.append({"start": turn.start, "end": turn.end, "speaker": speaker})
 
         print(f"[DIARIZATION] Detected {len(unique_speakers)} unique speakers: {sorted(unique_speakers)}")
         print(f"[DIARIZATION] Found {len(speaker_segments)} speaker segments")
@@ -1266,6 +1337,7 @@ def perform_speaker_diarization(audio_data, sample_rate):
     except Exception as e:
         print(f"[ERROR] Diarization error: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -1297,6 +1369,7 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
         return {}
 
     from collections import defaultdict
+
     batch_start_ms = batch_end_ts_ms - audio_duration_secs * 1000
 
     # Group pyannote segments by their original id, preserving first-appearance
@@ -1317,7 +1390,7 @@ def resolve_speaker_identity(speaker_segments, batch_end_ts_ms, audio_duration_s
     for original_id, time_ranges in speaker_times.items():
         name_overlap = defaultdict(float)
         for seg_start_ms, seg_end_ms in time_ranges:
-            for (tl_start, tl_end, name) in intervals:
+            for tl_start, tl_end, name in intervals:
                 overlap = max(0.0, min(seg_end_ms, tl_end) - max(seg_start_ms, tl_start))
                 if overlap > 0:
                     name_overlap[name] += overlap
@@ -1404,17 +1477,25 @@ def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_en
 
         # Translate per language and emit a second partial update with translated segments.
         languages_to_translate = [
-            lang for lang in Config.TARGET_LANGUAGES
+            lang
+            for lang in Config.TARGET_LANGUAGES
             if active_language_viewers.get(lang["code"], 0) > 0 and lang["code"] != source_lang
         ]
         translated_segments_by_lang = {lang["code"]: [] for lang in languages_to_translate}
         for lang_info in languages_to_translate:
             translated = translate_text(full_transcript, source_lang, lang_info["code"])
-            translated_segments_by_lang[lang_info["code"]].append({
-                "text": translated, "speaker": speaker, "start": 0.0, "end": audio_duration,
-            })
-        if source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES] and \
-                active_language_viewers.get(source_lang, 0) > 0:
+            translated_segments_by_lang[lang_info["code"]].append(
+                {
+                    "text": translated,
+                    "speaker": speaker,
+                    "start": 0.0,
+                    "end": audio_duration,
+                }
+            )
+        if (
+            source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES]
+            and active_language_viewers.get(source_lang, 0) > 0
+        ):
             translated_segments_by_lang[source_lang] = [dict(segment)]
 
         ws_payload_final = {
@@ -1434,7 +1515,10 @@ def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_en
             if active_language_viewers.get(lang_code, 0) > 0:
                 socketio.emit("new_translation", ws_payload_final, room=f"lang_{lang_code}")
 
-        log(f"Partial {utterance_id[:6]} ({audio_duration:.1f}s): {full_transcript[:60]}{'...' if len(full_transcript) > 60 else ''}", "PARTIAL")
+        log(
+            f"Partial {utterance_id[:6]} ({audio_duration:.1f}s): {full_transcript[:60]}{'...' if len(full_transcript) > 60 else ''}",
+            "PARTIAL",
+        )
     except Exception as e:
         print(f"[PARTIAL] error: {e}")
     finally:
@@ -1447,7 +1531,7 @@ def partial_transcribe_and_emit(audio_data, utterance_id, speaker_hint, batch_en
 @torch.inference_mode()
 def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, utterance_id=None):
     """Background thread for transcription and translation with speaker diarization"""
-    global is_processing, all_meeting_segments
+    global is_processing
 
     # Acquire transcription lock - this ensures we don't run while summarization is on GPU
     # If summarization is waiting for the lock, we'll wait here until it's done
@@ -1458,7 +1542,7 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
 
     try:
         # Timestamp for logging and transcript file
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Perform speaker diarization first (if enabled)
         speaker_segments = None
@@ -1477,10 +1561,9 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
             for chunk in result.get("chunks", []):
                 if isinstance(chunk, dict):
                     # Extract only the data we need, not the full chunk object
-                    chunks.append({
-                        "text": str(chunk.get("text", "")),
-                        "timestamp": tuple(chunk.get("timestamp", (0, 0)))
-                    })
+                    chunks.append(
+                        {"text": str(chunk.get("text", "")), "timestamp": tuple(chunk.get("timestamp", (0, 0)))}
+                    )
         else:
             full_transcript = str(result).strip()
             chunks = []
@@ -1554,12 +1637,7 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
                     if word_text and word_timestamp:
                         word_start = word_timestamp[0] if word_timestamp[0] is not None else 0
                         word_end = word_timestamp[1] if word_timestamp[1] is not None else word_start
-                        all_words.append({
-                            "text": word_text,
-                            "start": word_start,
-                            "end": word_end
-                        })
-
+                        all_words.append({"text": word_text, "start": word_start, "end": word_end})
 
             # Assign each word to a speaker segment based on overlap
             words_with_speakers = []
@@ -1581,13 +1659,15 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
                         best_speaker = resolved_names.get(orig, speaker_mapping.get(orig, orig))
                         best_segment_idx = idx
 
-                words_with_speakers.append({
-                    "text": word["text"],
-                    "speaker": best_speaker,
-                    "segment_idx": best_segment_idx,  # Track which diarization segment this belongs to
-                    "start": word["start"],
-                    "end": word["end"]
-                })
+                words_with_speakers.append(
+                    {
+                        "text": word["text"],
+                        "speaker": best_speaker,
+                        "segment_idx": best_segment_idx,  # Track which diarization segment this belongs to
+                        "start": word["start"],
+                        "end": word["end"],
+                    }
+                )
 
             # Group words by their diarization segment (not just by speaker!)
             # This ensures we get separate messages for each speaker turn
@@ -1597,44 +1677,51 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
                     "segment_idx": words_with_speakers[0]["segment_idx"],
                     "words": [words_with_speakers[0]["text"]],
                     "start": words_with_speakers[0]["start"],
-                    "end": words_with_speakers[0]["end"]
+                    "end": words_with_speakers[0]["end"],
                 }
 
                 for word in words_with_speakers[1:]:
                     # Only group if same speaker AND same diarization segment
-                    if (word["speaker"] == current_segment["speaker"] and
-                        word["segment_idx"] == current_segment["segment_idx"]):
+                    if (
+                        word["speaker"] == current_segment["speaker"]
+                        and word["segment_idx"] == current_segment["segment_idx"]
+                    ):
                         # Same segment - add word to current segment
                         current_segment["words"].append(word["text"])
                         current_segment["end"] = word["end"]
                     else:
                         # Different segment - save current segment and start new one
-                        segments_with_speakers.append({
-                            "text": " ".join(current_segment["words"]),
-                            "speaker": current_segment["speaker"],
-                            "start": current_segment["start"],
-                            "end": current_segment["end"]
-                        })
+                        segments_with_speakers.append(
+                            {
+                                "text": " ".join(current_segment["words"]),
+                                "speaker": current_segment["speaker"],
+                                "start": current_segment["start"],
+                                "end": current_segment["end"],
+                            }
+                        )
 
                         current_segment = {
                             "speaker": word["speaker"],
                             "segment_idx": word["segment_idx"],
                             "words": [word["text"]],
                             "start": word["start"],
-                            "end": word["end"]
+                            "end": word["end"],
                         }
 
                 # Don't forget the last segment
-                segments_with_speakers.append({
-                    "text": " ".join(current_segment["words"]),
-                    "speaker": current_segment["speaker"],
-                    "start": current_segment["start"],
-                    "end": current_segment["end"]
-                })
+                segments_with_speakers.append(
+                    {
+                        "text": " ".join(current_segment["words"]),
+                        "speaker": current_segment["speaker"],
+                        "start": current_segment["start"],
+                        "end": current_segment["end"],
+                    }
+                )
 
             # Filter out very short "Unknown" segments (noise from words between speaker turns)
             segments_with_speakers = [
-                seg for seg in segments_with_speakers
+                seg
+                for seg in segments_with_speakers
                 if not (seg["speaker"] == "Unknown" and len(seg["text"].strip()) < 10)
             ]
 
@@ -1665,12 +1752,9 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
                 print(f"[{timestamp}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['speaker']}: {seg['text']}")
         else:
             # No diarization or chunks - use full transcript
-            segments_with_speakers.append({
-                "text": full_transcript,
-                "speaker": "Speaker 1",
-                "start": 0,
-                "end": audio_duration
-            })
+            segments_with_speakers.append(
+                {"text": full_transcript, "speaker": "Speaker 1", "start": 0, "end": audio_duration}
+            )
             print(f"[{timestamp}] [{audio_duration:.2f}s] Speaker 1: {full_transcript}")
 
         # Write to transcript file
@@ -1722,29 +1806,35 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
         if Config.DEBUG:
             print(f"\n[WS EMIT 1/2] Sending source transcript ({len(segments_with_speakers)} segments):")
             for i, seg in enumerate(segments_with_speakers):
-                print(f"  [{i+1}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['speaker']}: {seg['text'][:80]}{'...' if len(seg['text']) > 80 else ''}")
+                print(
+                    f"  [{i+1}] [{seg['start']:.2f}s-{seg['end']:.2f}s] {seg['speaker']}: {seg['text'][:80]}{'...' if len(seg['text']) > 80 else ''}"
+                )
 
             # DEBUG: Print actual JSON payload to see what's being sent
             import json
+
             print(f"\n[WS DEBUG] Full payload being sent:")
             print(json.dumps(ws_payload_initial, indent=2, ensure_ascii=False))
 
         # Send initial message to admin room and all active language rooms
-        socketio.emit("new_translation", ws_payload_initial, room='admin')
+        socketio.emit("new_translation", ws_payload_initial, room="admin")
         for lang_code in active_language_viewers:
             if active_language_viewers[lang_code] > 0:
-                socketio.emit("new_translation", ws_payload_initial, room=f'lang_{lang_code}')
+                socketio.emit("new_translation", ws_payload_initial, room=f"lang_{lang_code}")
 
         # Only translate for languages that have active viewers
         # We no longer translate all languages just because admin is present
         # Admin can see translations for languages that have viewers
         # Also skip translating to the source language (no need for FR -> FR)
         languages_to_translate = [
-            lang for lang in Config.TARGET_LANGUAGES
+            lang
+            for lang in Config.TARGET_LANGUAGES
             if active_language_viewers.get(lang["code"], 0) > 0 and lang["code"] != source_lang
         ]
 
-        print(f"[TRANSLATION] Translating for {len(languages_to_translate)} languages: {[l['code'] for l in languages_to_translate]}")
+        print(
+            f"[TRANSLATION] Translating for {len(languages_to_translate)} languages: {[l['code'] for l in languages_to_translate]}"
+        )
         if source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES]:
             print(f"[TRANSLATION] Skipping {source_lang} (source language, no translation needed)")
 
@@ -1756,7 +1846,7 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
                 "text": translated_text,
                 "speaker": segment["speaker"],
                 "start": segment["start"],
-                "end": segment["end"]
+                "end": segment["end"],
             }
 
         # Translate all segments for active languages in parallel
@@ -1780,12 +1870,7 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
         if source_lang in [lang["code"] for lang in Config.TARGET_LANGUAGES]:
             if active_language_viewers.get(source_lang, 0) > 0:
                 translated_segments_by_lang[source_lang] = [
-                    {
-                        "text": seg["text"],
-                        "speaker": seg["speaker"],
-                        "start": seg["start"],
-                        "end": seg["end"]
-                    }
+                    {"text": seg["text"], "speaker": seg["speaker"], "start": seg["start"], "end": seg["end"]}
                     for seg in segments_with_speakers
                 ]
 
@@ -1808,16 +1893,19 @@ def transcribe_and_translate(audio_data, audio_duration, batch_end_ts_ms=None, u
             for lang, segs in translated_segments_by_lang.items():
                 print(f"  {lang}: {len(segs)} segments")
             if Config.DEVICE == "cuda":
-                print(f"[GPU MEMORY] After Translations: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved")
+                print(
+                    f"[GPU MEMORY] After Translations: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB allocated, {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB reserved"
+                )
 
         # Send translations to admin room and language-specific rooms
-        socketio.emit("new_translation", ws_payload_final, room='admin')
+        socketio.emit("new_translation", ws_payload_final, room="admin")
         for lang_code in translated_segments_by_lang.keys():
             if active_language_viewers.get(lang_code, 0) > 0:
-                socketio.emit("new_translation", ws_payload_final, room=f'lang_{lang_code}')
+                socketio.emit("new_translation", ws_payload_final, room=f"lang_{lang_code}")
     except Exception as e:
         print(f"[ERROR] Processing error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         is_processing = False
@@ -1864,7 +1952,7 @@ def process_audio():
 
                     # Calculate audio level for UI (admin only)
                     audio_level = np.abs(chunk).mean()
-                    socketio.emit("audio_level", {"level": float(audio_level * 100)}, room='admin')
+                    socketio.emit("audio_level", {"level": float(audio_level * 100)}, room="admin")
 
                     # Add to buffer for next sentence
                     buffer.append(chunk)
@@ -1900,7 +1988,7 @@ def process_audio():
                             "silence_threshold": audio_thresholds["silence_threshold"],
                             "silence_chunks_req": audio_thresholds["silence_chunks"],
                         },
-                        room='admin'
+                        room="admin",
                     )
                 except queue.Empty:
                     pass
@@ -1911,7 +1999,7 @@ def process_audio():
 
             # Calculate audio level (admin only)
             audio_level = np.abs(chunk).mean()
-            socketio.emit("audio_level", {"level": float(audio_level * 100)}, room='admin')
+            socketio.emit("audio_level", {"level": float(audio_level * 100)}, room="admin")
 
             # Calculate chunk limits dynamically based on current thresholds
             min_chunks = int(actual_sample_rate * audio_thresholds["min_audio_length"] / CHUNK_SIZE)
@@ -1930,7 +2018,7 @@ def process_audio():
                     "silence_threshold": audio_thresholds["silence_threshold"],
                     "silence_chunks_req": audio_thresholds["silence_chunks"],
                 },
-                room='admin'
+                room="admin",
             )
 
             # Check if current chunk is silent
@@ -1988,9 +2076,7 @@ def process_audio():
 
             # Level-based silence detection — only used when bot isn't driving batching.
             silence_detected = (
-                not bot_mode
-                and len(buffer) >= min_chunks
-                and silence_counter >= audio_thresholds["silence_chunks"]
+                not bot_mode and len(buffer) >= min_chunks and silence_counter >= audio_thresholds["silence_chunks"]
             )
             max_length_reached = len(buffer) >= max_chunks
             should_process = silence_detected or max_length_reached or speaker_switched
@@ -2031,7 +2117,9 @@ def process_audio():
 
                 # Skip transcription if audio is too quiet (likely silence/hallucination)
                 if avg_audio_level < Config.MIN_AUDIO_LEVEL:
-                    print(f"[AUDIO] Skipping transcription - audio too quiet ({avg_audio_level:.4f} < {Config.MIN_AUDIO_LEVEL})")
+                    print(
+                        f"[AUDIO] Skipping transcription - audio too quiet ({avg_audio_level:.4f} < {Config.MIN_AUDIO_LEVEL})"
+                    )
                     is_processing = False
                     continue
 
@@ -2049,12 +2137,14 @@ def process_audio():
                 # Launch background thread for transcription and translation
                 # This keeps the main loop responsive for WebSocket updates
                 processing_thread = threading.Thread(
-                    target=transcribe_and_translate, args=(audio_resampled, audio_duration, batch_end_ts, final_utt_id), daemon=True
+                    target=transcribe_and_translate,
+                    args=(audio_resampled, audio_duration, batch_end_ts, final_utt_id),
+                    daemon=True,
                 )
                 processing_thread.start()
 
                 # Emit processing started event for UI flash effect (admin only)
-                socketio.emit("processing_started", {"timestamp": time.time()}, room='admin')
+                socketio.emit("processing_started", {"timestamp": time.time()}, room="admin")
 
         except queue.Empty:
             continue
@@ -2138,16 +2228,18 @@ def get_audio_devices():
                 # Only include devices with input channels
                 if dev_info.get("maxInputChannels", 0) > 0:
                     is_loopback = dev_info.get("isLoopbackDevice", False)
-                    is_default = (i == p_audio.get_default_input_device_info()["index"])
+                    is_default = i == p_audio.get_default_input_device_info()["index"]
 
-                    devices.append({
-                        "index": i,
-                        "name": dev_info["name"],
-                        "channels": int(dev_info["maxInputChannels"]),
-                        "sample_rate": int(dev_info["defaultSampleRate"]),
-                        "is_loopback": is_loopback,
-                        "is_default": is_default
-                    })
+                    devices.append(
+                        {
+                            "index": i,
+                            "name": dev_info["name"],
+                            "channels": int(dev_info["maxInputChannels"]),
+                            "sample_rate": int(dev_info["defaultSampleRate"]),
+                            "is_loopback": is_loopback,
+                            "is_default": is_default,
+                        }
+                    )
             except Exception as e:
                 # Skip devices that can't be queried
                 continue
@@ -2157,11 +2249,7 @@ def get_audio_devices():
         # Sort: loopback devices first, then by name
         devices.sort(key=lambda d: (not d["is_loopback"], d["name"]))
 
-        return jsonify({
-            "status": "success",
-            "devices": devices,
-            "selected_index": selected_audio_device_index
-        })
+        return jsonify({"status": "success", "devices": devices, "selected_index": selected_audio_device_index})
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -2194,11 +2282,13 @@ def set_audio_device():
             print(f"[CONFIG] Audio device selection updated: index={device_index} ({dev_info['name']})")
             p_audio.terminate()
 
-            return jsonify({
-                "status": "success",
-                "message": "Device selected. Will be used on next 'Start Listening'.",
-                "device_index": device_index
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": "Device selected. Will be used on next 'Start Listening'.",
+                    "device_index": device_index,
+                }
+            )
 
         except Exception as e:
             p_audio.terminate()
@@ -2321,18 +2411,16 @@ def start_stats_emitter():
                 stats = get_system_stats()
                 # Emit full stats to admin sessions
                 if len(admin_sessions) > 0:
-                    socketio.emit('system_stats', stats, room='admin')
+                    socketio.emit("system_stats", stats, room="admin")
                 # Emit lightweight summarization status to all viewers
                 # This enables the "Generating Summary..." banner
                 if stats.get("gpu") and stats["gpu"].get("summarization_started_at"):
-                    socketio.emit('system_stats', {
-                        "gpu": {
-                            "summarization_started_at": stats["gpu"]["summarization_started_at"]
-                        }
-                    })
+                    socketio.emit(
+                        "system_stats", {"gpu": {"summarization_started_at": stats["gpu"]["summarization_started_at"]}}
+                    )
                 elif sum(active_language_viewers.values()) > 0:
                     # Clear banner for viewers when summarization done
-                    socketio.emit('system_stats', {"gpu": {"summarization_started_at": None}})
+                    socketio.emit("system_stats", {"gpu": {"summarization_started_at": None}})
             except Exception as e:
                 print(f"[STATS] Error emitting stats: {e}")
 
@@ -2348,6 +2436,7 @@ def start_stats_emitter():
 def download_transcript():
     """Download the full transcript"""
     from flask import send_file
+
     if TRANSCRIPT_FILE.exists():
         return send_file(TRANSCRIPT_FILE, as_attachment=True, download_name=TRANSCRIPT_FILE.name)
     else:
@@ -2358,11 +2447,7 @@ def download_transcript():
 def handle_connect():
     """Handle client connection"""
     # Initialize client session
-    connected_clients[request.sid] = {
-        'role': None,
-        'language': None,
-        'authenticated': False
-    }
+    connected_clients[request.sid] = {"role": None, "language": None, "authenticated": False}
 
 
 @socketio.on("disconnect")
@@ -2374,16 +2459,16 @@ def handle_disconnect():
         client = connected_clients[request.sid]
 
         # Update viewer counts if was a viewer
-        if client['role'] == 'viewer' and client['language']:
-            lang = client['language']
+        if client["role"] == "viewer" and client["language"]:
+            lang = client["language"]
             if lang in active_language_viewers:
                 active_language_viewers[lang] = max(0, active_language_viewers[lang] - 1)
                 print(f"[VIEWER] Viewer left {lang} room. Active viewers for {lang}: {active_language_viewers[lang]}")
                 # Broadcast updated stats to admins
-                socketio.emit('viewer_stats', active_language_viewers, room='admin')
+                socketio.emit("viewer_stats", active_language_viewers, room="admin")
 
         # Remove from admin sessions if was admin
-        if client['role'] == 'admin' and request.sid in admin_sessions:
+        if client["role"] == "admin" and request.sid in admin_sessions:
             admin_sessions.discard(request.sid)
 
         del connected_clients[request.sid]
@@ -2395,26 +2480,29 @@ def handle_admin_authenticate(data):
     password = data.get("password", "")
 
     if password == Config.ADMIN_PASSWORD:
-        connected_clients[request.sid]['role'] = 'admin'
-        connected_clients[request.sid]['authenticated'] = True
+        connected_clients[request.sid]["role"] = "admin"
+        connected_clients[request.sid]["authenticated"] = True
         admin_sessions.add(request.sid)
-        join_room('admin')
+        join_room("admin")
         print(f"[ADMIN] Admin authenticated: {request.sid}")
-        emit('admin_authenticated', {'success': True, 'viewer_password': Config.VIEWER_PASSWORD})
+        emit("admin_authenticated", {"success": True, "viewer_password": Config.VIEWER_PASSWORD})
         # Send current stats
-        emit('viewer_stats', active_language_viewers)
+        emit("viewer_stats", active_language_viewers)
         # Send current listening status
-        emit('status', {'listening': is_listening})
+        emit("status", {"listening": is_listening})
         # Replay the current Meet-bot state so a late-arriving admin tab
         # knows whether a bot is already connected and which meeting URL.
-        emit('bot_status', {'connected': bot_connected, 'url': _meet_bot_url})
+        emit("bot_status", {"connected": bot_connected, "url": _meet_bot_url})
         if bot_connected and meet_participants:
-            emit('meet_roster', {
-                'participants': list(meet_participants.keys()),
-                'bot_connected': True,
-            })
+            emit(
+                "meet_roster",
+                {
+                    "participants": list(meet_participants.keys()),
+                    "bot_connected": True,
+                },
+            )
     else:
-        emit('admin_authenticated', {'success': False, 'message': 'Invalid password'})
+        emit("admin_authenticated", {"success": False, "message": "Invalid password"})
 
 
 @socketio.on("viewer_authenticate")
@@ -2423,24 +2511,24 @@ def handle_viewer_authenticate(data):
     password = data.get("password", "")
 
     if password == Config.VIEWER_PASSWORD:
-        connected_clients[request.sid]['authenticated'] = True
+        connected_clients[request.sid]["authenticated"] = True
         viewer_sessions.add(request.sid)
         print(f"[VIEWER] Viewer authenticated: {request.sid}")
-        emit('viewer_authenticated', {'success': True})
+        emit("viewer_authenticated", {"success": True})
     else:
-        emit('viewer_authenticated', {'success': False, 'message': 'Invalid passphrase'})
+        emit("viewer_authenticated", {"success": False, "message": "Invalid passphrase"})
 
 
 @socketio.on("get_languages")
 def handle_get_languages():
     """Send available languages to client"""
-    emit('available_languages', Config.TARGET_LANGUAGES)
+    emit("available_languages", Config.TARGET_LANGUAGES)
 
 
 @socketio.on("get_status")
 def handle_get_status():
     """Send current listening status to client"""
-    emit('status', {'listening': is_listening})
+    emit("status", {"listening": is_listening})
 
 
 @socketio.on("join_language_room")
@@ -2449,33 +2537,35 @@ def handle_join_language_room(data):
     language = data.get("language")
 
     # Check if viewer is authenticated
-    if request.sid not in connected_clients or not connected_clients[request.sid].get('authenticated'):
-        emit('error', {'message': 'Authentication required. Please enter the passphrase.'})
-        emit('joined_room', {'language': language, 'success': False, 'reason': 'not_authenticated'})
+    if request.sid not in connected_clients or not connected_clients[request.sid].get("authenticated"):
+        emit("error", {"message": "Authentication required. Please enter the passphrase."})
+        emit("joined_room", {"language": language, "success": False, "reason": "not_authenticated"})
         return
 
     if language and language in active_language_viewers:
         # Update client info
-        connected_clients[request.sid]['role'] = 'viewer'
-        connected_clients[request.sid]['language'] = language
+        connected_clients[request.sid]["role"] = "viewer"
+        connected_clients[request.sid]["language"] = language
 
         # Join the language room
-        join_room(f'lang_{language}')
+        join_room(f"lang_{language}")
 
         # Update viewer count
         active_language_viewers[language] += 1
 
-        print(f"[VIEWER] Viewer joined {language} room. Active viewers for {language}: {active_language_viewers[language]}")
+        print(
+            f"[VIEWER] Viewer joined {language} room. Active viewers for {language}: {active_language_viewers[language]}"
+        )
 
         # Broadcast updated stats to admins
-        socketio.emit('viewer_stats', active_language_viewers, room='admin')
+        socketio.emit("viewer_stats", active_language_viewers, room="admin")
 
         # Send current summary to the new viewer
         with summary_lock:
             if current_summary["last_updated"]:
-                emit('summary_update', current_summary)
+                emit("summary_update", current_summary)
 
-        emit('joined_room', {'language': language, 'success': True})
+        emit("joined_room", {"language": language, "success": True})
 
 
 @socketio.on("leave_language_room")
@@ -2487,21 +2577,23 @@ def handle_leave_language_room(data):
         client = connected_clients[request.sid]
 
         # Leave the room
-        leave_room(f'lang_{language}')
+        leave_room(f"lang_{language}")
 
         # Update viewer count
         if language in active_language_viewers:
             active_language_viewers[language] = max(0, active_language_viewers[language] - 1)
 
-        print(f"[VIEWER] Viewer left {language} room. Active viewers for {language}: {active_language_viewers[language]}")
+        print(
+            f"[VIEWER] Viewer left {language} room. Active viewers for {language}: {active_language_viewers[language]}"
+        )
 
         # Update client info
-        client['language'] = None
+        client["language"] = None
 
         # Broadcast updated stats to admins
-        socketio.emit('viewer_stats', active_language_viewers, room='admin')
+        socketio.emit("viewer_stats", active_language_viewers, room="admin")
 
-        emit('left_room', {'language': language, 'success': True})
+        emit("left_room", {"language": language, "success": True})
 
 
 def start_listening_internal():
@@ -2538,10 +2630,18 @@ def start_listening_internal():
                     print(f"Using manually selected device: {dev_info['name']}")
                 else:
                     print(f"[WARNING] Selected device has no input channels, falling back to auto-detect")
-                    socketio.emit("admin_error", {"message": "Selected audio device is not available. Using auto-detect."}, room="admin")
+                    socketio.emit(
+                        "admin_error",
+                        {"message": "Selected audio device is not available. Using auto-detect."},
+                        room="admin",
+                    )
             except Exception as e:
                 print(f"[WARNING] Selected device not available: {e}. Falling back to auto-detect")
-                socketio.emit("admin_error", {"message": "Selected audio device is not available. Using auto-detect."}, room="admin")
+                socketio.emit(
+                    "admin_error",
+                    {"message": "Selected audio device is not available. Using auto-detect."},
+                    room="admin",
+                )
 
         # Auto-detect loopback device if not manually selected or if manual selection failed
         if loopback_device is None:
@@ -2586,15 +2686,15 @@ def handle_start_listening():
     # Check if user is authenticated admin
     if request.sid not in connected_clients:
         print(f"[START] ERROR: {request.sid} not in connected_clients")
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
-    client_role = connected_clients[request.sid].get('role')
+    client_role = connected_clients[request.sid].get("role")
     print(f"[START] Client {request.sid} has role: {client_role}")
 
-    if client_role != 'admin':
+    if client_role != "admin":
         print(f"[START] ERROR: Client role is '{client_role}', not 'admin'")
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
     print(f"[START] Authorization passed, calling start_listening_internal()")
@@ -2628,15 +2728,15 @@ def handle_stop_listening():
     # Check if user is authenticated admin
     if request.sid not in connected_clients:
         print(f"[STOP] ERROR: {request.sid} not in connected_clients")
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
-    client_role = connected_clients[request.sid].get('role')
+    client_role = connected_clients[request.sid].get("role")
     print(f"[STOP] Client {request.sid} has role: {client_role}")
 
-    if client_role != 'admin':
+    if client_role != "admin":
         print(f"[STOP] ERROR: Client role is '{client_role}', not 'admin'")
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
     print(f"[STOP] Authorization passed, calling stop_listening_internal()")
@@ -2646,27 +2746,27 @@ def handle_stop_listening():
 @socketio.on("trigger_summary")
 def handle_trigger_summary():
     """Manually trigger a summary generation (admin only)"""
-    global last_summary_time, all_meeting_segments, summary_pending, last_summary_segment_count, previous_overview_text
+    global summary_pending
 
     # Check if user is authenticated admin
-    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+    if request.sid not in connected_clients or connected_clients[request.sid]["role"] != "admin":
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
-        emit('summary_error', {'message': 'Summarization is not enabled'})
+        emit("summary_error", {"message": "Summarization is not enabled"})
         return
 
     if summarization_paused:
-        emit('summary_error', {'message': 'Summarization is paused. Resume it first.'})
+        emit("summary_error", {"message": "Summarization is paused. Resume it first."})
         return
 
     if len(all_meeting_segments) == 0:
-        emit('summary_error', {'message': 'No transcript content to summarize yet'})
+        emit("summary_error", {"message": "No transcript content to summarize yet"})
         return
 
     if summary_pending:
-        emit('summary_error', {'message': 'Summary already pending, please wait'})
+        emit("summary_error", {"message": "Summary already pending, please wait"})
         return
 
     # Get NEW segments since last summary (for recent transcript)
@@ -2693,18 +2793,20 @@ def handle_trigger_summary():
         minutes_since_start = int((current_time - meeting_start_time) / 60)
 
     if len(new_transcript_text) < 50 and last_summary_segment_count > 0:
-        emit('summary_error', {'message': 'Not enough new content to summarize (need at least 50 new characters)'})
+        emit("summary_error", {"message": "Not enough new content to summarize (need at least 50 new characters)"})
         return
 
     # If currently processing transcription, schedule for after completion
     if is_processing:
         print(f"[SUMMARY] Manual trigger - scheduling after current transcription completes...")
-        emit('summary_generating', {'message': 'Waiting for transcription to complete...'})
+        emit("summary_generating", {"message": "Waiting for transcription to complete..."})
         summary_pending = True
         return
 
-    print(f"[SUMMARY] Manual trigger - generating summary for {len(all_meeting_segments)} total segments, {len(new_segments)} new ({time_range})...")
-    emit('summary_generating', {'message': 'Generating...'})
+    print(
+        f"[SUMMARY] Manual trigger - generating summary for {len(all_meeting_segments)} total segments, {len(new_segments)} new ({time_range})..."
+    )
+    emit("summary_generating", {"message": "Generating..."})
 
     # Generate in background thread to not block
     def generate_and_emit():
@@ -2723,15 +2825,15 @@ def handle_trigger_summary():
             previous_overview_text = "\n".join(overview_lines)
 
             # Emit original summary to admin room
-            socketio.emit('summary_update', summary, room='admin')
+            socketio.emit("summary_update", summary, room="admin")
 
             # Translate and emit to each language room
             for lang_code in active_language_viewers:
                 if active_language_viewers[lang_code] > 0:
                     translated_summary = translate_summary(summary, lang_code)
-                    socketio.emit('summary_update', translated_summary, room=f'lang_{lang_code}')
+                    socketio.emit("summary_update", translated_summary, room=f"lang_{lang_code}")
         else:
-            socketio.emit('summary_error', {'message': 'Failed to generate summary'}, room='admin')
+            socketio.emit("summary_error", {"message": "Failed to generate summary"}, room="admin")
 
     summary_thread = threading.Thread(target=generate_and_emit, daemon=True)
     summary_thread.start()
@@ -2743,12 +2845,12 @@ def handle_toggle_summarization():
     global summarization_paused
 
     # Check if user is authenticated admin
-    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+    if request.sid not in connected_clients or connected_clients[request.sid]["role"] != "admin":
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
     if summarization_pipe is None or not Config.ENABLE_SUMMARIZATION:
-        emit('summarization_status', {'enabled': False, 'reason': 'Summarization not configured'})
+        emit("summarization_status", {"enabled": False, "reason": "Summarization not configured"})
         return
 
     # Toggle the state
@@ -2757,26 +2859,23 @@ def handle_toggle_summarization():
     print(f"[SUMMARY] Summarization {status} by admin")
 
     # Emit to all admin clients
-    socketio.emit('summarization_status', {
-        'enabled': not summarization_paused,
-        'paused': summarization_paused
-    }, room='admin')
+    socketio.emit(
+        "summarization_status", {"enabled": not summarization_paused, "paused": summarization_paused}, room="admin"
+    )
 
 
 @socketio.on("broadcast_manual_summary")
 def handle_broadcast_manual_summary(data):
     """Broadcast a manually pasted summary (from Claude) to all viewers, translated to their language"""
-    global current_summary
-
     # Check if user is authenticated admin
-    if request.sid not in connected_clients or connected_clients[request.sid]['role'] != 'admin':
-        emit('error', {'message': 'Unauthorized. Admin access required.'})
+    if request.sid not in connected_clients or connected_clients[request.sid]["role"] != "admin":
+        emit("error", {"message": "Unauthorized. Admin access required."})
         return
 
-    summary_markdown = data.get('summary_markdown', '')
-    source_lang = data.get('source_lang', 'en')  # Default to English
+    summary_markdown = data.get("summary_markdown", "")
+    source_lang = data.get("source_lang", "en")  # Default to English
     if not summary_markdown:
-        emit('error', {'message': 'No summary provided'})
+        emit("error", {"message": "No summary provided"})
         return
 
     # Store original in current_summary for new viewers
@@ -2792,21 +2891,22 @@ def handle_broadcast_manual_summary(data):
 
     # Send to each viewer in their language
     for sid, client in connected_clients.items():
-        if client.get('role') == 'viewer':
-            target_lang = client.get('language', source_lang)
+        if client.get("role") == "viewer":
+            target_lang = client.get("language", source_lang)
 
             # Get or create translation
             if target_lang not in translations_cache:
                 log(f"Translating manual summary to {target_lang}", "SUMMARY")
                 translations_cache[target_lang] = translate_text(summary_markdown, source_lang, target_lang)
 
-            socketio.emit('manual_summary_update', {
-                'summary_markdown': translations_cache[target_lang],
-                'timestamp': time.time()
-            }, room=sid)
+            socketio.emit(
+                "manual_summary_update",
+                {"summary_markdown": translations_cache[target_lang], "timestamp": time.time()},
+                room=sid,
+            )
 
     # Confirm to admin
-    emit('manual_summary_broadcast', {'success': True, 'languages_sent': list(translations_cache.keys())})
+    emit("manual_summary_broadcast", {"success": True, "languages_sent": list(translations_cache.keys())})
 
 
 # ── Meet bot SocketIO namespace (Phase 4) ────────────────────────────────────
@@ -2815,6 +2915,7 @@ def handle_broadcast_manual_summary(data):
 # It streams two event types:
 #   audio_frame  — binary PCM16 payload + JSON meta {capture_ts_ms, sample_rate, channels}
 #   speaker_event — JSON {type, name, wall_clock_ms} for speaker_start/end/roster_update
+
 
 def _open_bot_wav():
     """Open a WAV file to record the full raw meeting audio from the bot."""
@@ -2868,7 +2969,7 @@ if Config.MEET_BOT_ENABLED:
 
     @socketio.on("disconnect", namespace="/meet_bot")
     def bot_disconnect():
-        global bot_connected, _active_speaker_starts
+        global bot_connected
         bot_connected = False
         # Close any open speaker intervals so timeline stays consistent.
         now_ms = int(time.time() * 1000)
@@ -2905,7 +3006,7 @@ if Config.MEET_BOT_ENABLED:
 
     @socketio.on("speaker_event", namespace="/meet_bot")
     def bot_speaker_event(ev):
-        global meet_participants, _active_speaker_starts, _current_bot_speaker, _pending_speaker_switch
+        global _current_bot_speaker, _pending_speaker_switch
         ev_type = ev.get("type")
         name = ev.get("name")
         ts_ms = ev.get("wall_clock_ms", int(time.time() * 1000))
@@ -2914,10 +3015,14 @@ if Config.MEET_BOT_ENABLED:
             for p in ev.get("participants", []):
                 if p and p not in meet_participants:
                     meet_participants[p] = ts_ms
-            socketio.emit("meet_roster", {
-                "participants": list(meet_participants.keys()),
-                "bot_connected": True,
-            }, room="admin")
+            socketio.emit(
+                "meet_roster",
+                {
+                    "participants": list(meet_participants.keys()),
+                    "bot_connected": True,
+                },
+                room="admin",
+            )
             return
 
         if not name:
@@ -2989,12 +3094,10 @@ def handle_start_meet_bot(data):
             return
 
         import subprocess
+
         try:
             _meet_bot_process = subprocess.Popen(
-                ["node", str(script),
-                 "--url", url,
-                 "--polyglot-url", "http://localhost:5000",
-                 "--headful"],
+                ["node", str(script), "--url", url, "--polyglot-url", "http://localhost:5000", "--headful"],
                 cwd=str(script.parent),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -3039,26 +3142,16 @@ if __name__ == "__main__":
 
     # Register cleanup function to remove lock file on exit
     import atexit
+
     atexit.register(cleanup_lock_file)
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Polyglot - Real-time Audio Translator")
     parser.add_argument(
-        "--auto-listen",
-        action="store_true",
-        help="Automatically start listening when the app launches"
+        "--auto-listen", action="store_true", help="Automatically start listening when the app launches"
     )
-    parser.add_argument(
-        "--open-browser",
-        action="store_true",
-        help="Automatically open browser when the app starts"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=5000,
-        help="Port to run the server on (default: 5000)"
-    )
+    parser.add_argument("--open-browser", action="store_true", help="Automatically open browser when the app starts")
+    parser.add_argument("--port", type=int, default=5000, help="Port to run the server on (default: 5000)")
     args = parser.parse_args()
 
     # Interactive startup configuration (password, meeting name, transcript)
@@ -3091,6 +3184,7 @@ if __name__ == "__main__":
 
     if args.open_browser:
         print(f"[AUTO-OPEN] Opening browser to http://localhost:{args.port}")
+
         # Open browser after a short delay to let server start
         def open_browser_delayed():
             time.sleep(2)  # Wait for server to start
@@ -3103,6 +3197,7 @@ if __name__ == "__main__":
 
     # If auto-listen is enabled, start listening after server starts
     if args.auto_listen:
+
         def auto_start_listening():
             time.sleep(3)  # Wait for server to fully initialize
             print("[AUTO-LISTEN] Starting audio capture...")

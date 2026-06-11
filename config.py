@@ -136,11 +136,11 @@ class Config:
     # Main European languages (available for viewers)
     TARGET_LANGUAGES = [
         {"code": "en", "name": "English"},
-       # {"code": "es", "name": "Spanish"},
-       # {"code": "fr", "name": "French"},
-       # {"code": "pt", "name": "Portuguese"},
+        # {"code": "es", "name": "Spanish"},
+        # {"code": "fr", "name": "French"},
+        # {"code": "pt", "name": "Portuguese"},
         {"code": "de", "name": "German"},
-       # {"code": "it", "name": "Italian"},
+        # {"code": "it", "name": "Italian"},
     ]
 
     # Admin languages - subset of TARGET_LANGUAGES to display in admin view

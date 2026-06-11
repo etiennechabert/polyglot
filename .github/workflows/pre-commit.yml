@@ -23,15 +23,17 @@ jobs:
 
     - name: Check for trailing whitespace
       run: |
-        # Find files with trailing whitespace
-        if git grep -I --line-number '\s$' -- '*.py' '*.md' '*.html' '*.css' '*.js' || true; then
+        # Find files with trailing whitespace (warning only)
+        if git grep -I --line-number '\s$' -- '*.py' '*.md' '*.html' '*.css' '*.js'; then
           echo "WARNING: Found trailing whitespace in files above"
         fi
 
     - name: Check for merge conflicts
       run: |
-        # Check for unresolved merge conflict markers
-        if git grep -n -E '^(<<<<<<<|=======|>>>>>>>)' -- . ':!.github' || true; then
+        # Check for unresolved merge conflict markers. Match the exact marker
+        # shapes (<<<<<<< ref / ======= alone / >>>>>>> ref) so ASCII banner
+        # lines like ============ in docs don't false-positive.
+        if git grep -n -E '^(<<<<<<< |=======$|>>>>>>> )' -- . ':!.github'; then
           echo "ERROR: Found merge conflict markers"
           exit 1
         fi
